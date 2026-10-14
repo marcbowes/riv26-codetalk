@@ -77,21 +77,15 @@ pub struct ReplayArgs {
 
 #[derive(Args, Debug)]
 pub struct SourceArgs {
-    /// Kinesis stream name or ARN (takes precedence over --outputs)
+    /// Kinesis stream name or ARN (required)
     #[arg(long, short = 's')]
     pub stream: Option<String>,
-    /// AWS Region [default: from the ARN or outputs.json, then the usual AWS env/profile chain]
+    /// AWS Region [default: from the ARN, then the usual AWS env/profile chain]
     #[arg(long)]
     pub region: Option<String>,
     /// AWS profile to use instead of the default chain
     #[arg(long)]
     pub profile: Option<String>,
-    /// outputs.json written by demo/deploy.sh [default: ../demo/outputs.json if it exists]
-    #[arg(long)]
-    pub outputs: Option<PathBuf>,
-    /// Use the outputs.json `demoCdc` stream (the polished app's cluster) instead of `events`
-    #[arg(long)]
-    pub demo_cluster: bool,
     /// Where to start: latest, trim-horizon, a lookback like 5m or 1h (AT_TIMESTAMP), or an RFC 3339 time
     #[arg(long, default_value = "latest", value_parser = StartPos::parse)]
     pub from: StartPos,
@@ -162,7 +156,8 @@ mod tests {
         let cli = Cli::try_parse_from([
             "events",
             "stats",
-            "--demo-cluster",
+            "--stream",
+            "s",
             "--from",
             "trim-horizon",
         ])
@@ -170,7 +165,7 @@ mod tests {
         let Some(Command::Stats(s)) = cli.command else {
             panic!()
         };
-        assert!(s.source.demo_cluster);
+        assert_eq!(s.source.stream.as_deref(), Some("s"));
         assert_eq!(s.source.from, StartPos::TrimHorizon);
 
         let cli = Cli::try_parse_from(["events", "replay", "samples/blog.jsonl", "--speed", "0"])

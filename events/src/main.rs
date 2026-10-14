@@ -151,12 +151,11 @@ async fn live(
     default_window: u64,
     make_view: impl FnOnce(String) -> Box<dyn View>,
 ) -> Result<()> {
-    let target = config::resolve_target(
-        source.stream.as_deref(),
-        source.region.as_deref(),
-        source.outputs.as_deref(),
-        source.demo_cluster,
-    )?;
+    let stream = source
+        .stream
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("pass --stream <name|arn> (the Kinesis stream your CDC stream writes to)"))?;
+    let target = config::resolve_target(stream, source.region.as_deref())?;
 
     let mut loader = aws_config::defaults(BehaviorVersion::latest()).timeout_config(
         TimeoutConfig::builder()

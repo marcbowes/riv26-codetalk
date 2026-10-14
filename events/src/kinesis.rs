@@ -63,7 +63,7 @@ pub async fn describe(client: &Client, stream: &StreamRef) -> Result<StreamInfo>
         .map_err(|e| {
             let hint = match e.code() {
                 Some("ResourceNotFoundException") => {
-                    " (create it first, e.g. with demo/deploy.sh, or check --region)"
+                    " (check the name and --region)"
                 }
                 _ => "",
             };

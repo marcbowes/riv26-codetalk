@@ -1,8 +1,8 @@
 # events
 
 Tails the Kinesis data stream that Aurora DSQL CDC writes to, and shows each change as it
-arrives with its lag broken down by stage. Used in step 11 (add a comment in the page, watch it
-arrive) and in the finale (`stats` under load).
+arrives with its lag broken down by stage. Used in step 11: add a comment in the page, watch it
+arrive.
 
 ```
 lag per stage: cdc = commit→CDC · kinesis = CDC→Kinesis · here = Kinesis→here · total = commit→here
@@ -29,13 +29,14 @@ managed key.
 
 ## Step 11: live demo
 
-The Kinesis stream exists before the talk; CDC is pointed at it in the console on stage.
+The Kinesis stream, CDC service role and CDC stream are all set up by hand (see the DSQL
+["Getting started with CDC streams"](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/cdc-setup.html)
+guide: `ON_DEMAND`, `MaxRecordSizeInKiB` 10240). Point this tool at the Kinesis stream:
 
 ```sh
 cd events
-./target/release/events                        # stream from ../demo/outputs.json → events.streamName
-./target/release/events --stream dat401-cdc --region us-east-1   # or name it directly (name or ARN)
-./target/release/events --table comments       # just the comments from the page
+./target/release/events --stream <name|arn> --region us-east-1
+./target/release/events --stream <name|arn> --table comments   # just the comments from the page
 ```
 
 - Start it **before** creating the CDC stream in the console. It starts at `latest`, so it
@@ -48,11 +49,10 @@ cd events
   `MillisBehindLatest`, events/s, and total-lag p50/p99 over the last 60 s.
 - On Ctrl-C it prints a one-line summary.
 
-## Finale: under load
+## Under load
 
 ```sh
-./target/release/events stats --demo-cluster   # outputs.json demoCdc (CDC on the polished app's cluster)
-./target/release/events stats --stream dat401-demo-cdc --region us-east-1
+./target/release/events stats --stream <name|arn>
 ```
 
 `stats` redraws once a second:
