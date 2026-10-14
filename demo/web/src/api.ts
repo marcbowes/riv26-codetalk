@@ -34,6 +34,16 @@ export class ApiError extends Error {
 
 export type Client = ReturnType<typeof createClient>;
 
+/**
+ * Hex SHA-256 of a request body. CloudFront's origin access control signs
+ * requests to the Lambda function URLs but can't hash bodies itself, so POSTs
+ * must carry x-amz-content-sha256.
+ */
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function createClient(baseUrl: string, onSample: (s: Sample) => void) {
   const base = baseUrl.replace(/\/+$/, "");
 
@@ -49,13 +59,16 @@ export function createClient(baseUrl: string, onSample: (s: Sample) => void) {
     let status = 0;
     let parsed: (T & Partial<ErrorResponse>) | undefined;
     try {
-      const res = await fetch(`${base}${path}`, {
-        method,
-        signal: ctl.signal,
-        ...(body === undefined
-          ? {}
-          : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-      });
+      let init: RequestInit = { method, signal: ctl.signal };
+      if (body !== undefined) {
+        const json = JSON.stringify(body);
+        init = {
+          ...init,
+          headers: { "content-type": "application/json", "x-amz-content-sha256": await sha256Hex(json) },
+          body: json,
+        };
+      }
+      const res = await fetch(`${base}${path}`, init);
       status = res.status;
       parsed = (await res.json().catch(() => undefined)) as typeof parsed;
       if (!res.ok) throw new ApiError(status, parsed?.error ?? `HTTP ${status}`);

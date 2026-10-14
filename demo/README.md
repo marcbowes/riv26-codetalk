@@ -7,12 +7,13 @@ it. Then `loadgen/` throws traffic at it and the CloudWatch dashboard shows Lamb
 scaling with no provisioning.
 
 ```
-            CloudFront + S3 (Dat401-Web)
-                    |  React UI: one column per Region
+            CloudFront (Dat401-Web)                 /*  React UI from S3: one column per Region
+     /api/us-west-2/*  |  /api/us-east-1/*          origin access control signs every API call
          +----------+-----------+
          v                      v
-  Lambda function URL     Lambda function URL       Hono + Drizzle (@aws/aurora-dsql-drizzle),
-  us-west-2               us-east-1                 Node 24 arm64, 1 DB connection per environment
+  Lambda function URL     Lambda function URL       AWS_IAM auth: only this distribution can call it.
+  us-west-2               us-east-1                 Hono + Drizzle (@aws/aurora-dsql-drizzle),
+                                                    Node 24 arm64, 1 DB connection per environment
          |                      |
          v                      v
   DSQL cluster  <== peered ==>  DSQL cluster        one logical database, strongly consistent
@@ -63,7 +64,8 @@ Settings (environment variables): `REGION_A` (us-west-2), `REGION_B` (us-east-1)
 Running `cdk` by hand: the app refuses to synthesize without context, because synthesizing the
 cluster stacks without their peers and deploying would un-peer them. Pass
 `-c clusterArns=<arnA>,<arnB>` (see `outputs.json`), plus
-`-c apiUrls=us-west-2=<url>,us-east-1=<url>` for `Dat401-Web`.
+`-c functionUrls=us-west-2=<url>,us-east-1=<url>` for `Dat401-Web`, and
+`-c distributionArn=<arn>` so the API stacks keep CloudFront's permission.
 
 ## Destroy
 
@@ -89,9 +91,11 @@ CLUSTER_ENDPOINT="$(jq -r '.regions[0].clusterEndpoint' outputs.json)" DB_USER=a
 # In another terminal: the UI on http://localhost:5173, both columns on the local API
 VITE_API_URL=http://localhost:3000 npm run dev:web
 
-# ...or the UI against the two deployed Regions
-VITE_API_URL="$(jq -r '[.regions[].apiUrl] | join(",")' outputs.json)" npm run dev:web
 ```
+
+The deployed APIs only accept requests signed by the CloudFront distribution, so a local UI
+can't call them directly: use the CloudFront URL (`webUrl` in `outputs.json`) for the deployed
+version.
 
 `DB_USER=admin` is simplest, since you already have `dsql:DbConnectAdmin`. To use the app's
 least-privilege role instead, map your IAM role to it once:
@@ -126,6 +130,15 @@ response has an `x-region` header.
 If DSQL refuses a connection (SQLSTATE 53400, more than 100 new connections per second; or 53300,
 too many connections), the API answers 429 with `x-amzn-ErrorType: TooManyRequestsException`, the
 same signal Lambda gives when it throttles. Clients should back off and retry.
+
+## Why the APIs sit behind CloudFront
+
+The talk account automatically strips any Lambda resource policy that makes a function URL
+public (`AuthType: NONE`). So the function URLs use `AWS_IAM` auth, and the only principal
+allowed to call them is the `Dat401-Web` distribution, through origin access control.
+The page and the APIs then share one origin, so there's no CORS. The catch: CloudFront can't
+hash request bodies when it signs for Lambda, so every POST must send
+`x-amz-content-sha256: <hex SHA-256 of the body>`. The web app and `loadgen` both do.
 
 ## Scaling notes for the finale
 

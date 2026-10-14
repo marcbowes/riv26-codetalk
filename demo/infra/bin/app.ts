@@ -39,6 +39,7 @@ if (cfg.clusterArns) {
       env: env(region),
       description: `DAT401 demo: blog API in ${region}`,
       clusterArn: arns[region] as string,
+      ...(cfg.distributionArn ? { distributionArn: cfg.distributionArn } : {}),
     });
   }
 
@@ -49,14 +50,14 @@ if (cfg.clusterArns) {
     clusters: cfg.regions.map((region) => ({ region, clusterId: clusterIdFromArn(arns[region] as string) })),
   });
 
-  // Needs the API URLs (another Region's outputs), so deploy.sh passes them in.
-  if (cfg.apiUrls) {
-    const urls = cfg.apiUrls;
+  // Needs both function URLs (one is another Region's output), so deploy.sh passes them in.
+  if (cfg.functionUrls) {
+    const urls = cfg.functionUrls;
     new WebStack(app, STACKS.web, {
       env: env(cfg.regionA),
-      description: "DAT401 demo: static React UI on S3 + CloudFront",
+      description: "DAT401 demo: React UI on S3 + CloudFront, and /api/<region>/* to each Region's API",
       witnessRegion: cfg.witnessRegion,
-      regions: cfg.regions.map((region) => ({ region, apiUrl: urls[region] as string })),
+      regions: cfg.regions.map((region) => ({ region, functionUrl: urls[region] as string })),
     });
   }
 }

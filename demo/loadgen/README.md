@@ -170,7 +170,10 @@ seconds) × seconds per request.
 
 ## HTTP
 
-- **Function URLs do not negotiate HTTP/2.** Checked 2026-10-14 with
+- **Targets are CloudFront paths** (`https://<distribution>/api/<region>/`), because the
+  function URLs only accept requests signed by the distribution. POSTs carry
+  `x-amz-content-sha256` (the body's hex SHA-256), which CloudFront needs to sign them.
+- **Function URLs do not negotiate HTTP/2** (CloudFront does). Checked 2026-10-14 with
   `curl --http2` and `openssl s_client -alpn h2,http/1.1` against
   `*.lambda-url.us-east-1.on.aws` and `*.lambda-url.us-east-2.on.aws`: the
   server picks no ALPN protocol and answers HTTP/1.1. So every in-flight

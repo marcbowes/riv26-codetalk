@@ -1,5 +1,12 @@
-// The static React app: private S3 bucket behind CloudFront (OAC), plus a
-// generated /config.json telling the app which Regional APIs to call.
+// One CloudFront distribution for everything:
+//   /*                 the React app, from a private S3 bucket (OAC)
+//   /api/<region>/*    that Region's API, a Lambda function URL with AWS_IAM auth (OAC)
+//   /config.json       generated: the Regions and their /api/<region>/ paths
+// Same origin for page and APIs, so no CORS. The APIs aren't public: only this
+// distribution may call them (deploy.sh grants it on the API stacks).
+//
+// Lambda OAC can't hash request bodies, so POST/PUT clients must send
+// x-amz-content-sha256 (the web app and loadgen do).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
@@ -13,9 +20,12 @@ import { REGION_NAMES } from "./names";
 const WEB_DIST = path.resolve(__dirname, "../../web/dist");
 
 export interface WebStackProps extends cdk.StackProps {
-  regions: { region: string; apiUrl: string }[];
+  regions: { region: string; functionUrl: string }[];
   witnessRegion: string;
 }
+
+/** Path prefix CloudFront routes to a Region's API (lambda.ts strips it). */
+export const apiPath = (region: string) => `/api/${region}/`;
 
 export class WebStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: WebStackProps) {
@@ -34,6 +44,28 @@ export class WebStack extends cdk.Stack {
     });
 
     const origin = origins.S3BucketOrigin.withOriginAccessControl(bucket);
+
+    const lambdaOac = new cloudfront.FunctionUrlOriginAccessControl(this, "ApiOac", {
+      description: "DAT401: sign requests to the blog API function URLs",
+      signing: cloudfront.Signing.SIGV4_ALWAYS,
+    });
+    const apiBehaviors: Record<string, cloudfront.BehaviorOptions> = {};
+    for (const r of props.regions) {
+      apiBehaviors[`${apiPath(r.region)}*`] = {
+        origin: new origins.HttpOrigin(new URL(r.functionUrl).host, {
+          originId: `api-${r.region}`,
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+          originAccessControlId: lambdaOac.originAccessControlId,
+          readTimeout: cdk.Duration.seconds(30),
+        }),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        // Everything but Host: SigV4 is computed for the function URL's own host.
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      };
+    }
+
     const distribution = new cloudfront.Distribution(this, "Cdn", {
       comment: "DAT401 multi-Region blog",
       defaultRootObject: "index.html",
@@ -52,6 +84,7 @@ export class WebStack extends cdk.Stack {
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         },
+        ...apiBehaviors,
       },
     });
 
@@ -60,7 +93,11 @@ export class WebStack extends cdk.Stack {
         s3deploy.Source.asset(WEB_DIST),
         s3deploy.Source.jsonData("config.json", {
           witnessRegion: props.witnessRegion,
-          regions: props.regions.map((r) => ({ ...r, name: REGION_NAMES[r.region] ?? r.region })),
+          regions: props.regions.map((r) => ({
+            region: r.region,
+            apiUrl: apiPath(r.region),
+            name: REGION_NAMES[r.region] ?? r.region,
+          })),
         }),
       ],
       destinationBucket: bucket,
@@ -71,6 +108,7 @@ export class WebStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "WebUrl", { value: `https://${distribution.distributionDomainName}` });
     new cdk.CfnOutput(this, "DistributionId", { value: distribution.distributionId });
+    new cdk.CfnOutput(this, "DistributionArn", { value: distribution.distributionArn });
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
   }
 }

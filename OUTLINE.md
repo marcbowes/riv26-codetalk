@@ -114,7 +114,9 @@ no intervention. Live TPS.
   migrations: all DDL happens in psql, so the audience sees jobs.
 - The finale app is pre-deployed, so nothing is deployed live on stage.
 - Plain Lambda (not Web Functions) for the API, Node 24, with function URLs.
-  The UI is static React on S3 + CloudFront calling both Regions' URLs.
+  The UI is static React on S3 + CloudFront, and the same distribution routes
+  `/api/<region>/*` to each Region's function URL (IAM auth + origin access
+  control: the talk account strips public function URL policies).
 - AI on stage: Kiro or Claude Code. Either works.
 
 ## Gotchas

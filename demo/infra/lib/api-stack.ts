@@ -1,5 +1,7 @@
-// The blog API in one Region: Hono on Lambda (Node 24, arm64) behind a
-// function URL, connecting to that Region's DSQL endpoint as blog_app.
+// The blog API in one Region: Hono on Lambda (Node 24, arm64) behind an
+// IAM-authenticated function URL, connecting to that Region's DSQL endpoint as
+// blog_app. Only the Dat401-Web CloudFront distribution may call the URL (OAC):
+// public function URLs get their resource policy stripped in this account.
 import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -15,6 +17,8 @@ const DEMO_DIR = path.resolve(__dirname, "../..");
 export interface ApiStackProps extends cdk.StackProps {
   /** This Region's cluster ARN. */
   clusterArn: string;
+  /** The Dat401-Web distribution, once it exists (deploy.sh passes it on the second pass). */
+  distributionArn?: string;
 }
 
 export class ApiStack extends cdk.Stack {
@@ -75,20 +79,28 @@ export class ApiStack extends cdk.Stack {
       },
     });
 
-    const url = fn.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
-      // CORS lives here, not in the app: setting both duplicates the headers.
-      cors: {
-        allowedOrigins: ["*"],
-        allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.POST],
-        allowedHeaders: ["content-type"],
-        exposedHeaders: ["x-region", "server-timing", "x-amzn-ErrorType", "retry-after"],
-        maxAge: cdk.Duration.days(1),
-      },
-    });
+    // No CORS: the browser calls the API through CloudFront on the page's own origin.
+    const url = fn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
     this.url = url.url;
 
-    new cdk.CfnOutput(this, "ApiUrl", { value: url.url });
+    // Function URLs need both permissions (since October 2025), scoped to the distribution.
+    if (props.distributionArn) {
+      const cloudfrontPrincipal = new iam.ServicePrincipal("cloudfront.amazonaws.com");
+      fn.addPermission("CloudFrontInvokeFunctionUrl", {
+        principal: cloudfrontPrincipal,
+        action: "lambda:InvokeFunctionUrl",
+        functionUrlAuthType: lambda.FunctionUrlAuthType.AWS_IAM,
+        sourceArn: props.distributionArn,
+      });
+      fn.addPermission("CloudFrontInvokeFunction", {
+        principal: cloudfrontPrincipal,
+        action: "lambda:InvokeFunction",
+        invokedViaFunctionUrl: true,
+        sourceArn: props.distributionArn,
+      });
+    }
+
+    new cdk.CfnOutput(this, "FunctionUrl", { value: url.url });
     new cdk.CfnOutput(this, "RoleArn", { value: role.roleArn });
     new cdk.CfnOutput(this, "FunctionName", { value: fn.functionName });
     new cdk.CfnOutput(this, "ClusterEndpoint", { value: clusterEndpoint });

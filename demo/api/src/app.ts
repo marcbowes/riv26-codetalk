@@ -25,9 +25,8 @@ export interface AppOptions {
   /** Reported in every body and the x-region header. */
   region?: string;
   /**
-   * Emit CORS headers from the app. On for local dev. Off on Lambda: the
-   * function URL's CORS config adds them, and doing both duplicates
-   * Access-Control-Allow-Origin on GET/POST (which browsers reject).
+   * Emit CORS headers from the app. On for local dev (web on :5173, API on
+   * :3000). Off on Lambda: the page and the API share CloudFront's origin.
    */
   cors?: boolean;
   /** One JSON log line per request. */
@@ -92,14 +91,13 @@ export function createApp(opts: AppOptions) {
       cors({
         origin: "*",
         allowMethods: ["GET", "POST", "OPTIONS"],
-        allowHeaders: ["content-type"],
+        allowHeaders: ["content-type", "x-amz-content-sha256"],
         exposeHeaders: ["x-region", "server-timing", "x-amzn-ErrorType", "retry-after"],
         maxAge: 86_400,
       }),
     );
   } else {
-    // If a preflight ever reaches the function, answer it; the function URL
-    // supplies the CORS headers.
+    // Same origin via CloudFront, so no preflights are expected; answer any anyway.
     app.options("*", (c) => c.body(null, 204));
   }
 

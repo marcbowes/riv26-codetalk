@@ -146,11 +146,18 @@ wait_cluster_active "$REGION_B" "$CLUSTER_ID_B"
 info "both clusters ACTIVE"
 
 # ---------------------------------------------------------------------------
-log "4/8 API (Lambda + function URL) in both Regions"
+log "4/8 API (Lambda + IAM function URL) in both Regions"
 
-deploy --concurrency 2 -c "clusterArns=$CLUSTER_ARNS" --outputs-file "$OUT_DIR/api.json" "$STACK_API_A" "$STACK_API_B"
-API_URL_A="$(out "$OUT_DIR/api.json" "$STACK_API_A" ApiUrl)"
-API_URL_B="$(out "$OUT_DIR/api.json" "$STACK_API_B" ApiUrl)"
+# Function URLs use AWS_IAM auth: only the Web stack's CloudFront distribution
+# may call them. On re-runs we already know its ARN; on the very first run the
+# grant is added after step 6 creates the distribution.
+DISTRIBUTION_ARN="$(stack_output "$REGION_A" "$STACK_WEB" DistributionArn)"
+api_ctx=(-c "clusterArns=$CLUSTER_ARNS")
+[[ -n "$DISTRIBUTION_ARN" ]] && api_ctx+=(-c "distributionArn=$DISTRIBUTION_ARN")
+
+deploy --concurrency 2 "${api_ctx[@]}" --outputs-file "$OUT_DIR/api.json" "$STACK_API_A" "$STACK_API_B"
+FUNCTION_URL_A="$(out "$OUT_DIR/api.json" "$STACK_API_A" FunctionUrl)"
+FUNCTION_URL_B="$(out "$OUT_DIR/api.json" "$STACK_API_B" FunctionUrl)"
 ROLE_ARN_A="$(out "$OUT_DIR/api.json" "$STACK_API_A" RoleArn)"
 ROLE_ARN_B="$(out "$OUT_DIR/api.json" "$STACK_API_B" RoleArn)"
 FUNCTION_A="$(out "$OUT_DIR/api.json" "$STACK_API_A" FunctionName)"
@@ -167,12 +174,21 @@ read -r -a setup_extra <<<"${SETUP_ARGS:-}"
   ${setup_extra[@]+"${setup_extra[@]}"})
 
 # ---------------------------------------------------------------------------
-log "6/8 Web UI (S3 + CloudFront)"
+log "6/8 Web UI and API routes (S3 + CloudFront)"
 
 (cd "$DEMO_DIR" && npm run build -w @dat401/web --silent)
-deploy -c "clusterArns=$CLUSTER_ARNS" -c "apiUrls=$REGION_A=$API_URL_A,$REGION_B=$API_URL_B" \
+deploy -c "clusterArns=$CLUSTER_ARNS" -c "functionUrls=$REGION_A=$FUNCTION_URL_A,$REGION_B=$FUNCTION_URL_B" \
   --outputs-file "$OUT_DIR/web.json" "$STACK_WEB"
 WEB_URL="$(out "$OUT_DIR/web.json" "$STACK_WEB" WebUrl)"
+NEW_DISTRIBUTION_ARN="$(out "$OUT_DIR/web.json" "$STACK_WEB" DistributionArn)"
+API_URL_A="$WEB_URL/api/$REGION_A/"
+API_URL_B="$WEB_URL/api/$REGION_B/"
+
+if [[ "$NEW_DISTRIBUTION_ARN" != "$DISTRIBUTION_ARN" ]]; then
+  info "granting $NEW_DISTRIBUTION_ARN access to both APIs"
+  deploy --concurrency 2 -c "clusterArns=$CLUSTER_ARNS" -c "distributionArn=$NEW_DISTRIBUTION_ARN" \
+    --outputs-file "$OUT_DIR/api.json" "$STACK_API_A" "$STACK_API_B"
+fi
 
 # ---------------------------------------------------------------------------
 log "7/8 CloudWatch dashboard"
@@ -185,22 +201,22 @@ log "8/8 Writing $OUTPUTS"
 
 jq -n \
   --arg witness "$WITNESS_REGION" \
-  --arg rA "$REGION_A" --arg urlA "$API_URL_A" --arg idA "$CLUSTER_ID_A" --arg arnA "$ARN_A" \
+  --arg rA "$REGION_A" --arg urlA "$API_URL_A" --arg furlA "$FUNCTION_URL_A" --arg idA "$CLUSTER_ID_A" --arg arnA "$ARN_A" \
   --arg epA "$ENDPOINT_A" --arg fnA "$FUNCTION_A" \
-  --arg rB "$REGION_B" --arg urlB "$API_URL_B" --arg idB "$CLUSTER_ID_B" --arg arnB "$ARN_B" \
+  --arg rB "$REGION_B" --arg urlB "$API_URL_B" --arg furlB "$FUNCTION_URL_B" --arg idB "$CLUSTER_ID_B" --arg arnB "$ARN_B" \
   --arg epB "$ENDPOINT_B" --arg fnB "$FUNCTION_B" \
   --arg web "$WEB_URL" --arg dash "$DASHBOARD_URL" \
   '{
     witnessRegion: $witness,
     regions: [
-      {region: $rA, apiUrl: $urlA, clusterId: $idA, clusterArn: $arnA, clusterEndpoint: $epA, functionName: $fnA},
-      {region: $rB, apiUrl: $urlB, clusterId: $idB, clusterArn: $arnB, clusterEndpoint: $epB, functionName: $fnB}
+      {region: $rA, apiUrl: $urlA, functionUrl: $furlA, clusterId: $idA, clusterArn: $arnA, clusterEndpoint: $epA, functionName: $fnA},
+      {region: $rB, apiUrl: $urlB, functionUrl: $furlB, clusterId: $idB, clusterArn: $arnB, clusterEndpoint: $epB, functionName: $fnB}
     ],
     webUrl: $web,
     dashboardUrl: $dash
   }' >"$OUTPUTS"
 
-# Smoke test: each Region's API reaches its own cluster endpoint.
+# Smoke test, through CloudFront: each Region's API reaches its own cluster endpoint.
 health() {
   local body
   body="$(curl -sS --max-time 20 "${1}health" 2>&1 || true)"

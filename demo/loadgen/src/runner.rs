@@ -22,6 +22,31 @@ use crate::util::fmt_clock;
 
 const ERROR_TYPE: HeaderName = HeaderName::from_static("x-amzn-errortype");
 const JSON: HeaderValue = HeaderValue::from_static("application/json");
+const CONTENT_SHA256: HeaderName = HeaderName::from_static("x-amz-content-sha256");
+
+/// Hex SHA-256 of a request body. CloudFront's origin access control signs the
+/// request to the Lambda function URL but can't hash the body, so POSTs carry
+/// the hash in x-amz-content-sha256 (harmless when calling an API directly).
+pub fn sha256_hex(body: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(body);
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
+fn json_post<U: reqwest::IntoUrl>(client: &reqwest::Client, url: U, body: String) -> reqwest::RequestBuilder {
+    let hash = sha256_hex(body.as_bytes());
+    client
+        .post(url)
+        .header(CONTENT_TYPE, JSON)
+        .header(CONTENT_SHA256, hash)
+        .body(body)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Proto {
@@ -265,11 +290,7 @@ fn build(ctx: &Ctx, target: &Target, op: Op) -> (Op, RequestBuilder) {
         (Op::CreateComment, Some(id)) => {
             let mut body = String::with_capacity(192);
             text::comment_json(&mut body, user);
-            let req = client
-                .post(post_url(&target.base, id, "/comments"))
-                .header(CONTENT_TYPE, JSON)
-                .body(body);
-            (op, req)
+            (op, json_post(client, post_url(&target.base, id, "/comments"), body))
         }
         (Op::CreatePost, _) => {
             let category = if ctx.categories.is_empty() {
@@ -277,11 +298,8 @@ fn build(ctx: &Ctx, target: &Target, op: Op) -> (Op, RequestBuilder) {
             } else {
                 &ctx.categories[fastrand::usize(..ctx.categories.len())]
             };
-            let req = client
-                .post(target.create_post_url.clone())
-                .header(CONTENT_TYPE, JSON)
-                .body(text::post_json(user, category));
-            (op, req)
+            let body = text::post_json(user, category);
+            (op, json_post(client, target.create_post_url.clone(), body))
         }
         (Op::ListByCategory, _) => {
             let u = &target.category_urls[fastrand::usize(..target.category_urls.len())];
@@ -407,5 +425,20 @@ pub async fn refresher(ctx: Arc<Ctx>, client: Client, every: Duration) {
                 .events
                 .push(format!("{}: refreshing posts failed: {e:#}", target.label)),
         }
+    }
+}
+
+#[cfg(test)]
+mod sha_tests {
+    #[test]
+    fn sha256_hex_matches_known_vectors() {
+        assert_eq!(
+            super::sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            super::sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

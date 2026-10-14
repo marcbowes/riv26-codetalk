@@ -1,5 +1,5 @@
 // Runtime config. Deployed: /config.json, written by the Web stack with each
-// Region's function URL. Local dev: VITE_API_URL (one URL, or a comma-separated
+// Region's API path on this origin (/api/<region>/, routed by CloudFront). Local dev: VITE_API_URL (one URL, or a comma-separated
 // list); one URL is shown in both columns so you can see the layout and the
 // cross-column updates against a single local API.
 
