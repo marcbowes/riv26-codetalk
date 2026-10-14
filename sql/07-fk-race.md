@@ -20,7 +20,8 @@ SELECT id AS user_id FROM users WHERE username = 'raluca' \gset
 | `COMMIT;` → succeeds | |
 | | `COMMIT;` → **succeeds** |
 
-They wrote different rows, so OCC sees no conflict. Now there's an orphan:
+They wrote different rows, so OCC sees no conflict. Now there are orphans: B's
+comment, plus the step-2 "First!" comment, since nothing cascaded:
 
 ```sql
 SELECT c.id, c.body
@@ -39,12 +40,14 @@ ALTER TABLE comments
   REFERENCES posts (id) ON DELETE CASCADE NOT VALID;
 
 ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;  -- returns job_id
-CALL sys.wait_for_job('<job_id>');                                -- false
-SELECT status, details FROM sys.jobs WHERE job_id = '<job_id>';  -- failed
+CALL sys.wait_for_job('<job_id>');                                -- succeeded = f
+SELECT status, details FROM sys.jobs WHERE job_id = '<job_id>';
+--  failed | insert or update on table "comments" violates foreign key constraint "comments_post_fk"
 ```
 
-With PostgreSQL semantics, a `NOT VALID` constraint is already enforced for new
-writes (confirm on DSQL). Validation is about the rows that are already there.
+The `NOT VALID` constraint is already enforced for new writes (an insert with
+a bogus `post_id` fails with 23503). Validation is about the rows that are
+already there.
 
 ## 3. Clean up, validate again
 
@@ -53,13 +56,19 @@ DELETE FROM comments c
 WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.id = c.post_id);
 
 ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;
-CALL sys.wait_for_job('<job_id>');                                -- true
+CALL sys.wait_for_job('<job_id>');                                -- succeeded = t
 ```
 
 ## 4. Re-run the race: B fails at commit
 
 Re-insert a post first (`\i sql/02-first-rows.sql` or a fresh slug), then
-`\gset` again in both panes.
+**reconnect pane B (`\c`)** and `\gset` again in both panes.
+
+Why reconnect: pane B's session still has the schema from before the
+`ALTER TABLE`. Its first statement touching `comments` fails with
+`schema has been updated by another transaction (OC001)` instead of reaching
+the race. That's another thing you could teach (OC001 is a schema conflict,
+OC000 a data conflict), but it muddies this demo.
 
 | Session A | Session B |
 |---|---|
