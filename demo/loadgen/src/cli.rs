@@ -124,11 +124,12 @@ pub struct Args {
     )]
     pub category_share: f64,
 
-    /// Percent of writes that create a post (POST /posts); the rest comment on a random post
+    /// Percent of writes that create a post (POST /posts); the rest comment on a random post.
+    /// Off by default: new posts land on the blog's front page, which the talk shows afterwards.
     #[arg(
         long,
         value_name = "PCT",
-        default_value_t = 5.0,
+        default_value_t = 0.0,
         help_heading = "Traffic mix"
     )]
     pub new_post_share: f64,

@@ -80,7 +80,7 @@ The binary's full `--help` explains every flag. The important ones:
 | `--concurrency N` | | Closed loop instead: N workers, each sending its next request when the last returns. |
 | `--ramp SECS` | 60 | Linear ramp from zero. Gentle on purpose (see below). |
 | `--duration` | until Ctrl-C | `90s`, `10m`, `1h30m`. |
-| `--mix R/W` | `90/10` | Plus `--list-share` (40), `--category-share` (50), `--new-post-share` (5). |
+| `--mix R/W` | `90/10` | Plus `--list-share` (40), `--category-share` (50), `--new-post-share` (0). |
 | `--connections N` | 2048 | Max connections, which equals max in-flight requests, per Region. |
 | `--timeout`, `--connect-timeout` | 10 s, 5 s | |
 | `--threads N` | CPUs | Tokio worker threads. |
@@ -106,8 +106,8 @@ such a batch; seed data with spread-out timestamps pages fully.
 | `GET /posts?limit=20` | 18% |
 | `GET /posts?limit=20&category=<random>` | 18% |
 | `GET /posts/:id` (random known post) | 54% |
-| `POST /posts/:id/comments` (random user, generated text) | 9.5% |
-| `POST /posts` (random author and category, title marked `(load test xxxxxx)`) | 0.5% |
+| `POST /posts/:id/comments` (random user, generated text) | 10% |
+| `POST /posts` (random author and category, title marked `(load test xxxxxx)`) | 0% (`--new-post-share`; new posts would sit on the front page the talk shows next) |
 
 **Refreshing the post pool.** Posts the generator creates join the id pool as
 soon as their 201 arrives. Every `--refresh` seconds (15 by default) it also
