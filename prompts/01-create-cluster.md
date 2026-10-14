@@ -1,7 +1,7 @@
 # Step 1: second cluster, via AI
 
 ```
-Create a new Aurora DSQL cluster in us-east-1 and tell me its endpoint.
+Create a new Aurora DSQL cluster in us-west-2 and tell me its endpoint.
 ```
 
 Expected: the agent runs `aws dsql create-cluster` (or uses the MCP server)

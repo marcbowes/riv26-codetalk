@@ -21,7 +21,6 @@ export interface DashboardStackProps extends cdk.StackProps {
 // Categorical slots 1 and 2 (validated as a pair): color follows the Region on
 // every widget.
 const REGION_COLORS = ["#2a78d6", "#eb6834"] as const;
-const LIMIT_GRAY = "#8a8f98";
 
 const MINUTE = cdk.Duration.minutes(1);
 
@@ -118,11 +117,7 @@ export class DashboardStack extends cdk.Stack {
         ],
         [
           graph("Requests per minute", lambda("Invocations", "Sum"), 12),
-          graph("Concurrent Lambda environments", lambda("ConcurrentExecutions", "Maximum"), 12, {
-            leftAnnotations: [
-              { value: 1000, label: "Account concurrency quota (per Region)", color: LIMIT_GRAY, fill: cw.Shading.NONE },
-            ],
-          }),
+          graph("Concurrent Lambda environments", lambda("ConcurrentExecutions", "Maximum"), 12),
         ],
         [
           graph("Lambda duration p50 (ms)", lambda("Duration", "p50"), 6),

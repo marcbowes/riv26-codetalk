@@ -35,7 +35,7 @@ guide: `ON_DEMAND`, `MaxRecordSizeInKiB` 10240). Point this tool at the Kinesis 
 
 ```sh
 cd events
-./target/release/events --stream <name|arn> --region us-east-1
+./target/release/events --stream <name|arn> --region us-west-2
 ./target/release/events --stream <name|arn> --table comments   # just the comments from the page
 ```
 

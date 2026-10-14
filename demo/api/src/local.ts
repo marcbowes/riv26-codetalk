@@ -1,7 +1,7 @@
 // Local dev server: `npm run dev` (tsx watch). Talks to a real cluster using
 // your AWS credentials (default provider chain; AWS_PROFILE works).
 //
-//   CLUSTER_ENDPOINT=<id>.dsql.us-east-1.on.aws DB_USER=admin npm run dev
+//   CLUSTER_ENDPOINT=<id>.dsql.us-west-2.on.aws DB_USER=admin npm run dev
 //
 // DB_USER defaults to blog_app, which only works if your IAM principal was
 // granted it (AWS IAM GRANT blog_app TO '<your role arn>'); admin is simplest.

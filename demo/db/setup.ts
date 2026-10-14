@@ -2,9 +2,9 @@
 // REGION_A: peered clusters are one logical database, so the schema, roles,
 // IAM mappings and data all show up in REGION_B too.
 //
-//   npx tsx db/setup.ts --endpoint <id>.dsql.us-east-1.on.aws \
-//     --role-arn arn:aws:iam::123456789012:role/dat401-blog-api-us-east-1 \
-//     --role-arn arn:aws:iam::123456789012:role/dat401-blog-api-us-east-2
+//   npx tsx db/setup.ts --endpoint <id>.dsql.us-west-2.on.aws \
+//     --role-arn arn:aws:iam::123456789012:role/dat401-blog-api-us-west-2 \
+//     --role-arn arn:aws:iam::123456789012:role/dat401-blog-api-us-east-1
 //
 // Safe to re-run: every step checks before it acts.
 import { parseArgs } from "node:util";

@@ -9,8 +9,8 @@
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REGION_A="${REGION_A:-us-east-1}"
-REGION_B="${REGION_B:-us-east-2}"
+REGION_A="${REGION_A:-us-west-2}"
+REGION_B="${REGION_B:-us-east-1}"
 FORCE="${FORCE:-0}"
 
 STACK_CLUSTER_A="Dat401-Cluster-$REGION_A"

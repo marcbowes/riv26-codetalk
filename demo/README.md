@@ -2,7 +2,7 @@
 
 The finished version of the blog built live in the talk, shown in minutes 35 to 45. One Aurora DSQL
 database is peered across two Regions, with a Lambda API in each Region and a React page that
-shows both side by side. Write a comment in us-east-1 and the next read in us-east-2 already has
+shows both side by side. Write a comment in us-west-2 and the next read in us-east-1 already has
 it. Then `loadgen/` throws traffic at it and the CloudWatch dashboard shows Lambda and DSQL
 scaling with no provisioning.
 
@@ -12,11 +12,11 @@ scaling with no provisioning.
          +----------+-----------+
          v                      v
   Lambda function URL     Lambda function URL       Hono + Drizzle (@aws/aurora-dsql-drizzle),
-  us-east-1               us-east-2                 Node 24 arm64, 1 DB connection per environment
+  us-west-2               us-east-1                 Node 24 arm64, 1 DB connection per environment
          |                      |
          v                      v
   DSQL cluster  <== peered ==>  DSQL cluster        one logical database, strongly consistent
-  us-east-1                     us-east-2           witness Region: us-west-2
+  us-west-2                     us-east-1           witness Region: us-east-2
 ```
 
 | Folder | What |
@@ -56,14 +56,14 @@ cd demo
 8. writes `outputs.json` (the API URLs, cluster ids/endpoints, web and dashboard URLs, used by
    `loadgen/`) and pings each API's `/health`
 
-Settings (environment variables): `REGION_A` (us-east-1), `REGION_B` (us-east-2),
-`WITNESS_REGION` (us-west-2), `SKIP_BOOTSTRAP=1`, and `SETUP_ARGS` for extra
+Settings (environment variables): `REGION_A` (us-west-2), `REGION_B` (us-east-1),
+`WITNESS_REGION` (us-east-2), `SKIP_BOOTSTRAP=1`, and `SETUP_ARGS` for extra
 `db/setup.ts` flags, such as `--regrant` after recreating the API stacks, or `--skip-seed`.
 
 Running `cdk` by hand: the app refuses to synthesize without context, because synthesizing the
 cluster stacks without their peers and deploying would un-peer them. Pass
 `-c clusterArns=<arnA>,<arnB>` (see `outputs.json`), plus
-`-c apiUrls=us-east-1=<url>,us-east-2=<url>` for `Dat401-Web`.
+`-c apiUrls=us-west-2=<url>,us-east-1=<url>` for `Dat401-Web`.
 
 ## Destroy
 
@@ -105,7 +105,7 @@ npm run typecheck       # all workspaces (TypeScript 7)
 npm test                # API + seed unit tests, no database needed
 PG_TEST_URL=postgres://postgres@localhost:5432/postgres npm test -w @dat401/db
                         # setup steps, seed and every API route against a scratch local PostgreSQL
-npm run synth -- -c clusterArns=arn:aws:dsql:us-east-1:111122223333:cluster/aaaaaaaaaaaaaaaaaaaaaaaaaa,arn:aws:dsql:us-east-2:111122223333:cluster/bbbbbbbbbbbbbbbbbbbbbbbbbb
+npm run synth -- -c clusterArns=arn:aws:dsql:us-west-2:111122223333:cluster/aaaaaaaaaaaaaaaaaaaaaaaaaa,arn:aws:dsql:us-east-1:111122223333:cluster/bbbbbbbbbbbbbbbbbbbbbbbbbb
 ```
 
 ## API
@@ -129,14 +129,13 @@ same signal Lambda gives when it throttles. Clients should back off and retry.
 
 ## Scaling notes for the finale
 
-- **Lambda concurrency.** This account's quota is 1,000 concurrent executions per Region
-  (checked: `L-B99A9384` is 1,000 in us-east-1 and us-east-2), shared by every function in the
-  Region. Lambda also caps synchronous invocations at 10 times that per second. Throughput per
-  Region is the lower of 1,000 ÷ request duration (25,000/s at 40 ms) and 10,000/s, so with fast
-  requests the cap is 10,000 requests/s. Past that, Lambda answers 429. Throttles show on the dashboard, which also
-  draws the 1,000 line on the concurrency graph. For bigger numbers, request an increase of
-  "Concurrent executions" (Service Quotas, AWS Lambda, `L-B99A9384`) in both Regions well before
-  the talk.
+- **Lambda concurrency.** Concurrent executions (`L-B99A9384`) are per Region and shared by
+  every function in the Region. In the talk account (332656840177) it is 10,000 in us-west-2 but
+  1,000 in us-east-1, so us-east-1 is the ceiling. Lambda also caps synchronous invocations at
+  10 times the concurrency quota per second. Per Region, throughput is the lower of concurrency
+  ÷ request duration (25,000/s for 1,000 at 40 ms) and that rate cap. Past that, Lambda answers
+  429, and throttles show on the dashboard. For bigger numbers, raise "Concurrent executions"
+  (Service Quotas, AWS Lambda, `L-B99A9384`) in us-east-1 well before the talk.
 - **DSQL connections.** Each Lambda environment holds one connection, reused while it's warm and
   recycled before DSQL's 60-minute limit. A cluster accepts 100 new connections per second (burst
   1,000) and 10,000 in total, so ramp the load rather than slamming it in. The 429s above are what

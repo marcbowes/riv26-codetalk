@@ -140,7 +140,8 @@ which exercises multi-Region strong consistency: a 404 there would be a bug.
 - A DSQL cluster accepts **100 new connections/s (burst 1,000)** and
   **10,000 connections** in total. Each Region has its own cluster, so each
   has its own limits.
-- The account's Lambda concurrency is **1,000 per Region** today.
+- The talk account's Lambda concurrency is **10,000 in us-west-2 but 1,000 in
+  us-east-1**, so us-east-1 is the ceiling until that quota is raised.
 
 The arithmetic: at a steady state, concurrent executions per Region ≈
 req/s per Region × seconds per request. While ramping, new environments
@@ -207,7 +208,7 @@ cargo run --release --example mock_server -- --region us-east-1 --region us-east
 ```
 
 **Stage, EC2 close to the API (big).**
-1. Start an instance in us-east-1 (c7i.4xlarge or c7g.4xlarge, Amazon Linux 2023).
+1. Start an instance in us-west-2 (c7i.4xlarge or c7g.4xlarge, Amazon Linux 2023).
 2. Run [`ec2-setup.sh`](ec2-setup.sh).
 3. `scp demo/outputs.json` up to it.
 4. Run inside `tmux`, so a dropped SSH session doesn't stop the load:

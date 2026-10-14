@@ -1,6 +1,6 @@
 // Context → config. deploy.sh passes everything via `-c key=value`:
 //
-//   regionA, regionB, witnessRegion   (defaults us-east-1, us-east-2, us-west-2)
+//   regionA, regionB, witnessRegion   (defaults us-west-2, us-east-1, us-east-2)
 //   clusterPhase=create               first deploy only: cluster stacks, no peers
 //   clusterArns=<arnA>,<arnB>         every other deploy (peering + API wiring)
 //   apiUrls=<region>=<url>,<region>=<url>   adds the Web stack
@@ -39,9 +39,9 @@ export function clusterIdFromArn(arn: string): string {
 }
 
 export function readConfig(app: App): DemoConfig {
-  const regionA = ctx(app, "regionA") ?? "us-east-1";
-  const regionB = ctx(app, "regionB") ?? "us-east-2";
-  const witnessRegion = ctx(app, "witnessRegion") ?? "us-west-2";
+  const regionA = ctx(app, "regionA") ?? "us-west-2";
+  const regionB = ctx(app, "regionB") ?? "us-east-1";
+  const witnessRegion = ctx(app, "witnessRegion") ?? "us-east-2";
   for (const r of [regionA, regionB, witnessRegion]) {
     if (!REGION_RE.test(r)) throw new Error(`not a Region name: ${r}`);
   }

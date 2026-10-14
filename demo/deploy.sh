@@ -5,7 +5,7 @@
 #   ./deploy.sh
 #
 # Environment:
-#   REGION_A (us-east-1)  REGION_B (us-east-2)  WITNESS_REGION (us-west-2)
+#   REGION_A (us-west-2)  REGION_B (us-east-1)  WITNESS_REGION (us-east-2)
 #   SETUP_ARGS="..."      extra flags for db/setup.ts, e.g. "--skip-seed" or "--regrant"
 #   SKIP_BOOTSTRAP=1      skip `cdk bootstrap` (it's idempotent, just slow-ish)
 set -euo pipefail
@@ -15,9 +15,9 @@ INFRA_DIR="$DEMO_DIR/infra"
 OUT_DIR="$DEMO_DIR/.deploy"
 OUTPUTS="$DEMO_DIR/outputs.json"
 
-REGION_A="${REGION_A:-us-east-1}"
-REGION_B="${REGION_B:-us-east-2}"
-WITNESS_REGION="${WITNESS_REGION:-us-west-2}"
+REGION_A="${REGION_A:-us-west-2}"
+REGION_B="${REGION_B:-us-east-1}"
+WITNESS_REGION="${WITNESS_REGION:-us-east-2}"
 SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
 
 # Fixed names (must match infra/lib/names.ts).
