@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { type AppConfig, REGION_NAMES } from "./config";
 import { RegionColumn } from "./RegionColumn";
 
@@ -9,11 +9,21 @@ export function App({ config }: { config: AppConfig }) {
   // comment written on the left can be watched arriving on the right.
   const [mirror, setMirror] = useState(true);
   const [views, setViews] = useState<View[]>(() => config.regions.map(() => ({ kind: "list" })));
+  // The column the presenter last clicked in: turning mirroring back on snaps the others to it.
+  const lastColumn = useRef(0);
 
   const navigate = useCallback(
-    (column: number, view: View) => setViews((vs) => vs.map((v, i) => (mirror || i === column ? view : v))),
+    (column: number, view: View) => {
+      lastColumn.current = column;
+      setViews((vs) => vs.map((v, i) => (mirror || i === column ? view : v)));
+    },
     [mirror],
   );
+
+  const toggleMirror = (on: boolean) => {
+    setMirror(on);
+    if (on) setViews((vs) => vs.map(() => vs[lastColumn.current] ?? { kind: "list" }));
+  };
 
   const named = config.regions.filter((r) => r.region !== "local");
   const witness = config.witnessRegion;
@@ -33,7 +43,7 @@ export function App({ config }: { config: AppConfig }) {
           )}
         </p>
         <label className="mirror">
-          <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
+          <input type="checkbox" checked={mirror} onChange={(e) => toggleMirror(e.target.checked)} />
           Keep both columns on the same page
         </label>
       </header>
