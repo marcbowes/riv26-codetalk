@@ -181,11 +181,8 @@ export async function ensureRole(q: Q, role: string): Promise<void> {
     await q(`CREATE ROLE ${role} WITH LOGIN`);
     log(`  ${role}: created`);
   }
-  try {
-    await q(`GRANT USAGE ON SCHEMA public TO ${role}`);
-  } catch (err) {
-    console.warn(`  GRANT USAGE ON SCHEMA public failed (${errMessage(err)}); continuing`);
-  }
+  // No GRANT USAGE ON SCHEMA public: DSQL rejects it ("feature not supported on
+  // system entity") and table grants are enough.
   await q(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${APP_TABLES.join(", ")} TO ${role}`);
   log(`  granted SELECT, INSERT, UPDATE, DELETE on ${APP_TABLES.join(", ")}`);
 }
