@@ -2,12 +2,10 @@
 # Deploy the DAT401 multi-Region blog demo. Idempotent: safe to re-run; every
 # step either checks first or is a no-op when nothing changed.
 #
-#   ./deploy.sh                      # everything
-#   ENABLE_DEMO_CDC=1 ./deploy.sh    # also stream the demo cluster's CDC to Kinesis
+#   ./deploy.sh
 #
 # Environment:
 #   REGION_A (us-east-1)  REGION_B (us-east-2)  WITNESS_REGION (us-west-2)
-#   ENABLE_DEMO_CDC=1     create a CDC stream on the REGION_A cluster into dat401-demo-cdc
 #   SETUP_ARGS="..."      extra flags for db/setup.ts, e.g. "--skip-seed" or "--regrant"
 #   SKIP_BOOTSTRAP=1      skip `cdk bootstrap` (it's idempotent, just slow-ish)
 set -euo pipefail
@@ -20,7 +18,6 @@ OUTPUTS="$DEMO_DIR/outputs.json"
 REGION_A="${REGION_A:-us-east-1}"
 REGION_B="${REGION_B:-us-east-2}"
 WITNESS_REGION="${WITNESS_REGION:-us-west-2}"
-ENABLE_DEMO_CDC="${ENABLE_DEMO_CDC:-0}"
 SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
 
 # Fixed names (must match infra/lib/names.ts).
@@ -28,11 +25,8 @@ STACK_CLUSTER_A="Dat401-Cluster-$REGION_A"
 STACK_CLUSTER_B="Dat401-Cluster-$REGION_B"
 STACK_API_A="Dat401-Api-$REGION_A"
 STACK_API_B="Dat401-Api-$REGION_B"
-STACK_EVENTS="Dat401-Events"
 STACK_WEB="Dat401-Web"
 STACK_DASHBOARD="Dat401-Dashboard"
-CDC_STREAM="dat401-cdc"
-DEMO_CDC_STREAM="dat401-demo-cdc"
 
 export AWS_PAGER=""
 
@@ -44,7 +38,7 @@ die() {
 }
 
 # ---------------------------------------------------------------------------
-log "1/9 Checking prerequisites"
+log "1/8 Checking prerequisites"
 
 for cmd in node npm aws jq curl; do
   command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required but not on PATH"
@@ -108,7 +102,7 @@ wait_cluster_active() {
 }
 
 # ---------------------------------------------------------------------------
-log "2/9 Bootstrapping CDK in $REGION_A and $REGION_B"
+log "2/8 Bootstrapping CDK in $REGION_A and $REGION_B"
 
 if [[ "$SKIP_BOOTSTRAP" == "1" ]]; then
   info "skipped (SKIP_BOOTSTRAP=1)"
@@ -117,7 +111,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-log "3/9 Multi-Region Aurora DSQL clusters"
+log "3/8 Multi-Region Aurora DSQL clusters"
 
 ARN_A="$(stack_output "$REGION_A" "$STACK_CLUSTER_A" ClusterArn)"
 ARN_B="$(stack_output "$REGION_B" "$STACK_CLUSTER_B" ClusterArn)"
@@ -152,7 +146,7 @@ wait_cluster_active "$REGION_B" "$CLUSTER_ID_B"
 info "both clusters ACTIVE"
 
 # ---------------------------------------------------------------------------
-log "4/9 API (Lambda + function URL) in both Regions"
+log "4/8 API (Lambda + function URL) in both Regions"
 
 deploy --concurrency 2 -c "clusterArns=$CLUSTER_ARNS" --outputs-file "$OUT_DIR/api.json" "$STACK_API_A" "$STACK_API_B"
 API_URL_A="$(out "$OUT_DIR/api.json" "$STACK_API_A" ApiUrl)"
@@ -163,7 +157,7 @@ FUNCTION_A="$(out "$OUT_DIR/api.json" "$STACK_API_A" FunctionName)"
 FUNCTION_B="$(out "$OUT_DIR/api.json" "$STACK_API_B" FunctionName)"
 
 # ---------------------------------------------------------------------------
-log "5/9 Database: schema, async indexes, blog_app role, IAM mappings, seed data"
+log "5/8 Database: schema, async indexes, blog_app role, IAM mappings, seed data"
 
 # One logical database across the peered clusters, so this runs once, in REGION_A.
 read -r -a setup_extra <<<"${SETUP_ARGS:-}"
@@ -173,62 +167,7 @@ read -r -a setup_extra <<<"${SETUP_ARGS:-}"
   ${setup_extra[@]+"${setup_extra[@]}"})
 
 # ---------------------------------------------------------------------------
-log "6/9 CDC: Kinesis streams and service role ($REGION_A)"
-
-deploy -c "clusterArns=$CLUSTER_ARNS" --outputs-file "$OUT_DIR/events.json" "$STACK_EVENTS"
-CDC_STREAM_ARN="$(out "$OUT_DIR/events.json" "$STACK_EVENTS" CdcStreamArn)"
-DEMO_CDC_STREAM_ARN="$(out "$OUT_DIR/events.json" "$STACK_EVENTS" DemoCdcStreamArn)"
-CDC_ROLE_ARN="$(out "$OUT_DIR/events.json" "$STACK_EVENTS" CdcRoleArn)"
-
-# Is there already a live CDC stream from the demo cluster into dat401-demo-cdc?
-find_demo_stream() {
-  local sid target
-  for sid in $(aws dsql list-streams --region "$REGION_A" --cluster-identifier "$CLUSTER_ID_A" \
-    --query 'streams[?status!=`DELETING` && status!=`DELETED` && status!=`FAILED`].streamIdentifier' \
-    --output text); do
-    target="$(aws dsql get-stream --region "$REGION_A" --cluster-identifier "$CLUSTER_ID_A" \
-      --stream-identifier "$sid" --query 'targetDefinition.kinesis.streamArn' --output text 2>/dev/null || true)"
-    if [[ "$target" == "$DEMO_CDC_STREAM_ARN" ]]; then
-      printf '%s' "$sid"
-      return 0
-    fi
-  done
-  return 0
-}
-
-DEMO_STREAM_ID="$(find_demo_stream)"
-if [[ "$ENABLE_DEMO_CDC" == "1" ]]; then
-  if [[ -n "$DEMO_STREAM_ID" ]]; then
-    info "demo CDC stream exists: $DEMO_STREAM_ID"
-  else
-    info "creating CDC stream: $CLUSTER_ID_A -> $DEMO_CDC_STREAM"
-    target="$(jq -nc --arg s "$DEMO_CDC_STREAM_ARN" --arg r "$CDC_ROLE_ARN" '{kinesis: {streamArn: $s, roleArn: $r}}')"
-    # A just-created IAM role can take a few seconds to be assumable.
-    for attempt in 1 2 3 4 5 6; do
-      if DEMO_STREAM_ID="$(aws dsql create-stream --region "$REGION_A" --cluster-identifier "$CLUSTER_ID_A" \
-        --target-definition "$target" --ordering UNORDERED --format JSON \
-        --tags "{\"Name\":\"$DEMO_CDC_STREAM\"}" --query streamIdentifier --output text)"; then
-        break
-      fi
-      ((attempt == 6)) && die "create-stream kept failing"
-      info "create-stream failed (attempt $attempt); retrying in 15 s"
-      sleep 15
-    done
-  fi
-  for _ in $(seq 1 10); do
-    aws dsql wait stream-active --region "$REGION_A" --cluster-identifier "$CLUSTER_ID_A" \
-      --stream-identifier "$DEMO_STREAM_ID" 2>/dev/null && break
-  done
-  info "demo CDC stream $DEMO_STREAM_ID: $(aws dsql get-stream --region "$REGION_A" \
-    --cluster-identifier "$CLUSTER_ID_A" --stream-identifier "$DEMO_STREAM_ID" --query status --output text)"
-elif [[ -n "$DEMO_STREAM_ID" ]]; then
-  info "demo CDC stream $DEMO_STREAM_ID exists (left as is; ENABLE_DEMO_CDC is not 1)"
-else
-  info "demo CDC not enabled (set ENABLE_DEMO_CDC=1 to stream the demo cluster into $DEMO_CDC_STREAM)"
-fi
-
-# ---------------------------------------------------------------------------
-log "7/9 Web UI (S3 + CloudFront)"
+log "6/8 Web UI (S3 + CloudFront)"
 
 (cd "$DEMO_DIR" && npm run build -w @dat401/web --silent)
 deploy -c "clusterArns=$CLUSTER_ARNS" -c "apiUrls=$REGION_A=$API_URL_A,$REGION_B=$API_URL_B" \
@@ -236,19 +175,13 @@ deploy -c "clusterArns=$CLUSTER_ARNS" -c "apiUrls=$REGION_A=$API_URL_A,$REGION_B
 WEB_URL="$(out "$OUT_DIR/web.json" "$STACK_WEB" WebUrl)"
 
 # ---------------------------------------------------------------------------
-log "8/9 CloudWatch dashboard"
+log "7/8 CloudWatch dashboard"
 
 deploy -c "clusterArns=$CLUSTER_ARNS" --outputs-file "$OUT_DIR/dashboard.json" "$STACK_DASHBOARD"
 DASHBOARD_URL="$(out "$OUT_DIR/dashboard.json" "$STACK_DASHBOARD" DashboardUrl)"
 
 # ---------------------------------------------------------------------------
-log "9/9 Writing $OUTPUTS"
-
-demo_cdc='null'
-if [[ -n "$DEMO_STREAM_ID" ]]; then
-  demo_cdc="$(jq -n --arg region "$REGION_A" --arg name "$DEMO_CDC_STREAM" --arg arn "$DEMO_CDC_STREAM_ARN" \
-    --arg id "$DEMO_STREAM_ID" '{region: $region, streamName: $name, streamArn: $arn, streamId: $id}')"
-fi
+log "8/8 Writing $OUTPUTS"
 
 jq -n \
   --arg witness "$WITNESS_REGION" \
@@ -257,8 +190,6 @@ jq -n \
   --arg rB "$REGION_B" --arg urlB "$API_URL_B" --arg idB "$CLUSTER_ID_B" --arg arnB "$ARN_B" \
   --arg epB "$ENDPOINT_B" --arg fnB "$FUNCTION_B" \
   --arg web "$WEB_URL" --arg dash "$DASHBOARD_URL" \
-  --arg cdcName "$CDC_STREAM" --arg cdcArn "$CDC_STREAM_ARN" --arg cdcRole "$CDC_ROLE_ARN" \
-  --argjson demoCdc "$demo_cdc" \
   '{
     witnessRegion: $witness,
     regions: [
@@ -266,9 +197,8 @@ jq -n \
       {region: $rB, apiUrl: $urlB, clusterId: $idB, clusterArn: $arnB, clusterEndpoint: $epB, functionName: $fnB}
     ],
     webUrl: $web,
-    dashboardUrl: $dash,
-    events: {region: $rA, streamName: $cdcName, streamArn: $cdcArn, cdcRoleArn: $cdcRole}
-  } + (if $demoCdc == null then {} else {demoCdc: $demoCdc} end)' >"$OUTPUTS"
+    dashboardUrl: $dash
+  }' >"$OUTPUTS"
 
 # Smoke test: each Region's API reaches its own cluster endpoint.
 health() {
@@ -290,9 +220,6 @@ DAT401 demo deployed.
   $REGION_B   $API_URL_B
               cluster $CLUSTER_ID_B ($ENDPOINT_B)
               health  $(health "$API_URL_B")
-
-  CDC         Kinesis $CDC_STREAM (talk step 11), role $CDC_ROLE_ARN
-  Demo CDC    ${DEMO_STREAM_ID:-not enabled}
 
   Outputs     $OUTPUTS
 EOF

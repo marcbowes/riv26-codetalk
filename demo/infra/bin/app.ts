@@ -4,7 +4,6 @@
 //
 //   Dat401-Cluster-<A>, Dat401-Cluster-<B>   DSQL clusters (two-phase peering)
 //   Dat401-Api-<A>, Dat401-Api-<B>           Lambda + function URL per Region
-//   Dat401-Events                            Kinesis streams + CDC role (REGION_A)
 //   Dat401-Web                               S3 + CloudFront UI (REGION_A)
 //   Dat401-Dashboard                         CloudWatch dashboard (REGION_A)
 import * as cdk from "aws-cdk-lib";
@@ -12,7 +11,6 @@ import { ApiStack } from "../lib/api-stack";
 import { ClusterStack } from "../lib/cluster-stack";
 import { clusterIdFromArn, readConfig } from "../lib/config";
 import { DashboardStack } from "../lib/dashboard-stack";
-import { EventsStack } from "../lib/events-stack";
 import { STACKS } from "../lib/names";
 import { WebStack } from "../lib/web-stack";
 
@@ -43,11 +41,6 @@ if (cfg.clusterArns) {
       clusterArn: arns[region] as string,
     });
   }
-
-  new EventsStack(app, STACKS.events, {
-    env: env(cfg.regionA),
-    description: "DAT401 demo: Kinesis streams and service role for Aurora DSQL CDC",
-  });
 
   new DashboardStack(app, STACKS.dashboard, {
     env: env(cfg.regionA),

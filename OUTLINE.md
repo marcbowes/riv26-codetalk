@@ -45,7 +45,7 @@ PostgreSQL. Then the agenda.
 | 8 | Step 4 is done: show the API working via the CLI. **Background AI task:** an HTML page that uses the API, run locally. | AI | Start the HTML task here; show the page after step 9. |
 | 9 | Query posts by category from `metadata`, then add the expression index on `metadata->>'category'`. Show `->` vs `->>` missing the index. | psql | See the backfill note under Risks. |
 | 10 | "Let's set up CDC." In the console, notice there are two clusters. The extra one costs nothing (CloudWatch: zero DPU, so it scales to zero). Clean it up anyway, but delete the **wrong** one. Act alarmed. PITR in the console brings it back. | console | **PITR not shipped yet.** See the PITR notes under Risks. |
-| 11 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add comments (from the HTML page) and watch them arrive. | console, CLI | Kinesis stream created ahead of time. Point CDC at the restored cluster. |
+| 11 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add comments (from the HTML page) and watch them arrive. | console, CLI | Kinesis stream and CDC role set up by hand (not part of `demo/`). Point CDC at the restored cluster. |
 | 12 | Multi-Region, explained verbally while walking through setup in the console. | console | Just show the flow; the real one is already built. |
 
 ### 35:00–40:00 The polished app
@@ -104,8 +104,8 @@ no intervention. Live TPS.
 - `schema.sql` for step 1, and a reset script
 - `prompts/`: the exact, rehearsed prompts for steps 1, 4, 5 and 8, plus a
   fallback snapshot for each
-- Kinesis stream + CDC service role for step 11 (Kinesis must be `ON_DEMAND`
-  with `MaxRecordSizeInKiB` 10240)
+- Step 11's Kinesis stream + CDC service role: set up by hand, not in `demo/`
+  (Kinesis must be `ON_DEMAND` with `MaxRecordSizeInKiB` 10240)
 
 ## Decisions so far
 

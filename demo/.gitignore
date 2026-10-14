@@ -1,4 +1,4 @@
-# Written by deploy.sh (account-specific; consumed by loadgen and events)
+# Written by deploy.sh (account-specific; consumed by loadgen)
 outputs.json
 .deploy/
 

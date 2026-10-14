@@ -2,7 +2,7 @@
   "name": "@dat401/infra",
   "version": "1.0.0",
   "private": true,
-  "description": "CDK app: multi-Region DSQL clusters, Lambda APIs, CloudFront web, CDC Kinesis streams, dashboard",
+  "description": "CDK app: multi-Region DSQL clusters, Lambda APIs, CloudFront web, dashboard",
   "scripts": {
     "cdk": "cdk",
     "synth": "cdk synth --quiet",

@@ -23,14 +23,14 @@ scaling with no provisioning.
 |---|---|
 | `api/` | Hono app (`src/app.ts`), Drizzle schema (`src/schema.ts`) and queries; `src/local.ts` (dev server), `src/lambda.ts` (handler) |
 | `db/` | `setup.ts`: idempotent schema, async indexes, `blog_app` role, `AWS IAM GRANT`s, seed data |
-| `infra/` | CDK app: `Dat401-Cluster-<region>` ×2, `Dat401-Api-<region>` ×2, `Dat401-Events`, `Dat401-Web`, `Dat401-Dashboard` |
+| `infra/` | CDK app: `Dat401-Cluster-<region>` ×2, `Dat401-Api-<region>` ×2, `Dat401-Web`, `Dat401-Dashboard` |
 | `web/` | Vite + React UI, reads `/config.json` at runtime |
 | `loadgen/` | Rust load generator (see its own README) |
 
 ## Prerequisites
 
 - Node.js 22.12 or newer (Lambda runs Node 24), npm, `jq`, `curl`
-- AWS CLI v2 recent enough to have `aws dsql` (including `create-stream`), and credentials for an
+- AWS CLI v2 recent enough to have `aws dsql`, and credentials for an
   account with admin-level permissions. The DB setup connects as the DSQL `admin` role, so your
   principal needs `dsql:DbConnectAdmin`.
 - No Docker: Lambda bundling uses the local esbuild.
@@ -39,8 +39,7 @@ scaling with no provisioning.
 
 ```bash
 cd demo
-./deploy.sh                    # about 15-25 minutes the first time (CloudFront is the slow part)
-ENABLE_DEMO_CDC=1 ./deploy.sh  # also stream the demo cluster's changes into Kinesis dat401-demo-cdc
+./deploy.sh    # about 15-25 minutes the first time (CloudFront is the slow part)
 ```
 
 `deploy.sh` is idempotent and safe to re-run. It:
@@ -52,15 +51,13 @@ ENABLE_DEMO_CDC=1 ./deploy.sh  # also stream the demo cluster's changes into Kin
 4. deploys both API stacks
 5. runs `db/setup.ts` once against REGION_A (schema, indexes, role, IAM grants for both Lambda
    roles, seed data if the tables are empty)
-6. deploys the Kinesis streams and CDC role; with `ENABLE_DEMO_CDC=1`, creates the demo cluster's
-   CDC stream (if it doesn't exist yet)
-7. builds the web app and deploys it with the API URLs baked into `config.json`
-8. deploys the dashboard
-9. writes `outputs.json` (the API URLs, cluster ids/endpoints, web and dashboard URLs, and the CDC
-   stream details used by `loadgen/` and `events/`) and pings each API's `/health`
+6. builds the web app and deploys it with the API URLs baked into `config.json`
+7. deploys the dashboard
+8. writes `outputs.json` (the API URLs, cluster ids/endpoints, web and dashboard URLs, used by
+   `loadgen/`) and pings each API's `/health`
 
 Settings (environment variables): `REGION_A` (us-east-1), `REGION_B` (us-east-2),
-`WITNESS_REGION` (us-west-2), `ENABLE_DEMO_CDC`, `SKIP_BOOTSTRAP=1`, and `SETUP_ARGS` for extra
+`WITNESS_REGION` (us-west-2), `SKIP_BOOTSTRAP=1`, and `SETUP_ARGS` for extra
 `db/setup.ts` flags, such as `--regrant` after recreating the API stacks, or `--skip-seed`.
 
 Running `cdk` by hand: the app refuses to synthesize without context, because synthesizing the
@@ -74,11 +71,9 @@ cluster stacks without their peers and deploying would un-peer them. Pass
 ./destroy.sh          # asks you to type "destroy"; FORCE=1 skips the prompt
 ```
 
-Deletes the demo clusters' CDC streams into our Kinesis streams, turns off deletion protection,
-then deletes the stacks in reverse order: Web and Dashboard, then Events, then both APIs, then
-both clusters together (a peered cluster stays in `PENDING_DELETE` until its peer goes too). It
-warns about, but doesn't delete, CDC streams on other clusters (such as the one built live in the
-talk) that point at `dat401-cdc`. The `CDKToolkit` bootstrap stacks stay.
+Turns off deletion protection, then deletes the stacks in reverse order: Web and Dashboard, then
+both APIs, then both clusters together (a peered cluster stays in `PENDING_DELETE` until its peer
+goes too). The `CDKToolkit` bootstrap stacks stay.
 
 ## Local development
 

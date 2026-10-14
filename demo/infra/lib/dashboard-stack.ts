@@ -6,11 +6,11 @@
 // CommitLatency, TotalDPU, ...) per the Aurora DSQL "Monitoring with CloudWatch"
 // and billing docs; connection counts are AWS/Usage (Service=AuroraDSQL,
 // Resource=ClusterConnectionCount), found with SEARCH because the full
-// dimension set isn't documented. Kinesis IncomingRecords from AWS/Kinesis.
+// dimension set isn't documented.
 import * as cdk from "aws-cdk-lib";
 import * as cw from "aws-cdk-lib/aws-cloudwatch";
 import type { Construct } from "constructs";
-import { CDC_STREAM, DASHBOARD_NAME, DEMO_CDC_STREAM, FUNCTION_NAME, REGION_NAMES } from "./names";
+import { DASHBOARD_NAME, FUNCTION_NAME, REGION_NAMES } from "./names";
 
 export interface DashboardStackProps extends cdk.StackProps {
   /** [REGION_A, REGION_B] with each Region's cluster id. */
@@ -19,9 +19,8 @@ export interface DashboardStackProps extends cdk.StackProps {
 }
 
 // Categorical slots 1 and 2 (validated as a pair): color follows the Region on
-// every widget. Kinesis streams use slots 3 and 7 so they never read as a Region.
+// every widget.
 const REGION_COLORS = ["#2a78d6", "#eb6834"] as const;
-const STREAM_COLORS = ["#1baf7a", "#4a3aa7"] as const;
 const LIMIT_GRAY = "#8a8f98";
 
 const MINUTE = cdk.Duration.minutes(1);
@@ -31,7 +30,6 @@ export class DashboardStack extends cdk.Stack {
 
   constructor(scope: Construct, id: string, props: DashboardStackProps) {
     super(scope, id, props);
-    const regionA = props.clusters[0]?.region ?? this.region;
 
     const perRegion = (
       make: (c: { region: string; clusterId: string }, color: string) => cw.IMetric,
@@ -78,28 +76,6 @@ export class DashboardStack extends cdk.Stack {
           period: MINUTE,
         }),
     );
-
-    const kinesis = [CDC_STREAM, DEMO_CDC_STREAM].map(
-      (stream, i) =>
-        new cw.Metric({
-          namespace: "AWS/Kinesis",
-          metricName: "IncomingRecords",
-          dimensionsMap: { StreamName: stream },
-          statistic: "Sum",
-          period: MINUTE,
-          region: regionA,
-          label: stream,
-          color: STREAM_COLORS[i],
-        }),
-    );
-
-    const cdcLag = new cw.MathExpression({
-      expression: `SEARCH('{AWS/AuroraDSQL,ClusterId,StreamId} MetricName="BehindSourceLag"', 'Maximum', 60)`,
-      usingMetrics: {},
-      searchRegion: regionA,
-      label: "",
-      period: MINUTE,
-    });
 
     const graph = (title: string, left: cw.IMetric[], width: number, extra: Partial<cw.GraphWidgetProps> = {}) =>
       new cw.GraphWidget({
@@ -163,10 +139,6 @@ export class DashboardStack extends cdk.Stack {
           graph("DSQL DPUs per minute", dsql("TotalDPU", "Sum"), 8),
           graph("DSQL commit latency (ms)", dsql("CommitLatency", "Average"), 8),
           graph("DSQL open connections", connections, 8),
-        ],
-        [
-          graph(`CDC: Kinesis records per minute (${regionA})`, kinesis, 12),
-          graph(`CDC: stream lag behind source (ms, ${regionA})`, [cdcLag], 12),
         ],
       ],
     });
