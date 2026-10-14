@@ -1,0 +1,29 @@
+{
+  "name": "dat401-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DAT401 (re:Invent 2026) polished multi-Region blog: Hono + Drizzle on Lambda, Aurora DSQL, React on CloudFront",
+  "workspaces": [
+    "api",
+    "db",
+    "infra",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:api": "npm run dev -w @dat401/api",
+    "dev:web": "npm run dev -w @dat401/web",
+    "build:web": "npm run build -w @dat401/web",
+    "db:setup": "npm run setup -w @dat401/db --",
+    "synth": "npm run synth -w @dat401/infra --"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

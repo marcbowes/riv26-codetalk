@@ -1,0 +1,33 @@
+{
+  "name": "@dat401/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Blog HTTP API: Hono + Drizzle (@aws/aurora-dsql-drizzle). Runs locally and on Lambda function URLs.",
+  "exports": {
+    "./app": "./src/app.ts",
+    "./schema": "./src/schema.ts",
+    "./categories": "./src/categories.ts",
+    "./queries": "./src/queries.ts",
+    "./types": "./src/types.ts",
+    "./validation": "./src/validation.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/local.ts",
+    "start": "tsx src/local.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@aws/aurora-dsql-drizzle": "0.2.0",
+    "@aws/aurora-dsql-node-postgres-connector": "0.1.9",
+    "@hono/node-server": "2.1.5",
+    "drizzle-orm": "0.45.4",
+    "hono": "4.13.13",
+    "pg": "8.23.1",
+    "pg-connection-string": "2.14.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  }
+}

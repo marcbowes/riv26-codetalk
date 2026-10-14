@@ -1,0 +1,11 @@
+# Written by deploy.sh (account-specific; consumed by loadgen and events)
+outputs.json
+.deploy/
+
+# CDK
+infra/cdk.out/
+infra/cdk.context.json
+
+# Build output
+web/dist/
+*.tsbuildinfo
