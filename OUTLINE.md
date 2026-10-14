@@ -88,8 +88,9 @@ no intervention. Live TPS.
 - **Concurrency between steps.** Step 7's deletes and step 10's cluster deletion
   happen while AI-built things are running. Make sure step 4's self-check is
   finished before step 7 starts deleting rows.
-- **FK race specifics (step 7).** What exactly happens when the FK is in place:
-  an FK violation, or an OCC `40001` on one side? Script the expected output.
+- **FK race specifics (step 7).** Settled by the FK docs: with the FK in place,
+  the deleter commits and the commenter fails at `COMMIT` with `OC000`
+  (`40001`). Scripted in `sql/07-fk-race.md`.
 
 - **Connection limits in the finale.** Each regional cluster accepts 100 new
   connections/s (burst of 1,000) and 10,000 total. Every Lambda environment
