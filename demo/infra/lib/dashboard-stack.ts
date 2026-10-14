@@ -3,10 +3,8 @@
 //
 // Metric names: Lambda from AWS/Lambda; DSQL from the AWS/AuroraDSQL namespace,
 // dimension ClusterId (TotalTransactions, ReadOnlyTransactions, OccConflicts,
-// CommitLatency, TotalDPU, ...) per the Aurora DSQL "Monitoring with CloudWatch"
-// and billing docs; connection counts are AWS/Usage (Service=AuroraDSQL,
-// Resource=ClusterConnectionCount), found with SEARCH because the full
-// dimension set isn't documented.
+// CommitLatency, TotalDPU, ...), checked against a deployed cluster; new
+// connections are AWS/Usage CallCount for the DbConnect API.
 import * as cdk from "aws-cdk-lib";
 import * as cw from "aws-cdk-lib/aws-cloudwatch";
 import type { Construct } from "constructs";
@@ -64,15 +62,25 @@ export class DashboardStack extends cdk.Stack {
           }),
       );
 
+    // New connections: AWS/Usage CallCount for the DbConnect API (one per IAM-authenticated
+    // connection). Verified against a deployed cluster; there's no open-connection gauge.
     const connections = perRegion(
       (c, color) =>
-        new cw.MathExpression({
-          expression: `SEARCH('Namespace="AWS/Usage" Service="AuroraDSQL" Resource="ClusterConnectionCount" ${c.clusterId}', 'Maximum', 60)`,
-          usingMetrics: {},
-          searchRegion: c.region,
+        new cw.Metric({
+          namespace: "AWS/Usage",
+          metricName: "CallCount",
+          dimensionsMap: {
+            Service: "AuroraDSQL",
+            Type: "API",
+            Resource: "DbConnect",
+            Class: "None",
+            ResourceId: `cluster/${c.clusterId}`,
+          },
+          statistic: "Sum",
+          period: MINUTE,
+          region: c.region,
           label: c.region,
           color,
-          period: MINUTE,
         }),
     );
 
@@ -133,7 +141,7 @@ export class DashboardStack extends cdk.Stack {
         [
           graph("DSQL DPUs per minute", dsql("TotalDPU", "Sum"), 8),
           graph("DSQL commit latency (ms)", dsql("CommitLatency", "Average"), 8),
-          graph("DSQL open connections", connections, 8),
+          graph("DSQL new connections per minute", connections, 8),
         ],
       ],
     });
