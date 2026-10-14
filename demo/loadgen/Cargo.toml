@@ -1,0 +1,27 @@
+[package]
+name = "loadgen"
+version = "0.1.0"
+edition = "2024"
+description = "HTTP load generator for the DAT401 (re:Invent 2026) multi-Region blog API"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6", features = ["derive", "wrap_help"] }
+fastrand = "2.5"
+hdrhistogram = { version = "7.5", default-features = false }
+libc = "0.2"
+memchr = "2.7"
+ratatui = "0.30"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "time", "signal", "sync"] }
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["http2"] }
+tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "time", "signal", "sync", "net"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

@@ -1,0 +1,3 @@
+target/
+# --report files written from this directory
+/*.json
