@@ -1,0 +1,23 @@
+{
+  "name": "@dat401/db",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Idempotent schema + role + seed setup for the demo cluster (run as admin, once, against REGION_A)",
+  "scripts": {
+    "setup": "tsx setup.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@aws/aurora-dsql-drizzle": "0.2.0",
+    "@aws/aurora-dsql-node-postgres-connector": "0.1.9",
+    "@dat401/api": "1.0.0",
+    "drizzle-orm": "0.45.4",
+    "pg": "8.23.1",
+    "pg-connection-string": "2.14.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  }
+}
