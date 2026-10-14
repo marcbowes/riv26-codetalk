@@ -7,8 +7,6 @@ import { ago, categoryLabel, ms } from "./format";
 
 const POLL_MS = 2_000;
 const HIGHLIGHT_MS = 8_000;
-// On stage the comments are the point: collapsed, the post shows its standfirst
-// (the SEO description) and the comments sit right under it.
 
 type Arrival =
   /** Written in another column (Region) of this page; lagMs = commit there → visible here. */
@@ -37,7 +35,6 @@ export function PostView({
   const [comments, setComments] = useState<CommentView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [arrivals, setArrivals] = useState<Record<string, Arrival>>({});
-  const [expanded, setExpanded] = useState(false);
 
   // Comments already on screen: anything not in here is an arrival.
   const seen = useRef<Set<string> | null>(null);
@@ -167,22 +164,9 @@ export function PostView({
         </ul>
       ) : null}
 
-      {expanded ? (
-        <div className="post-body" id={`body-${column}`}>
-          {blocks.map((b, i) => (b.startsWith("## ") ? <h3 key={i}>{b.slice(3)}</h3> : <p key={i}>{b}</p>))}
-        </div>
-      ) : (
-        <p className="standfirst">{post.metadata.seo.description || post.excerpt}</p>
-      )}
-      <button
-        type="button"
-        className="expand"
-        onClick={() => setExpanded((x) => !x)}
-        aria-expanded={expanded}
-        aria-controls={`body-${column}`}
-      >
-        {expanded ? "Show less" : "Read the whole post"}
-      </button>
+      <div className="post-body">
+        {blocks.map((b, i) => (b.startsWith("## ") ? <h3 key={i}>{b.slice(3)}</h3> : <p key={i}>{b}</p>))}
+      </div>
 
       <section className="comments" aria-label="Comments">
         <h3 className="comments-title">
