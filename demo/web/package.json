@@ -1,0 +1,26 @@
+{
+  "name": "@dat401/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static React UI: two side-by-side Regional mini-blogs over one multi-Region DSQL database",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fontsource-variable/atkinson-hyperlegible-next": "5.3.0",
+    "@fontsource-variable/big-shoulders": "5.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@dat401/api": "1.0.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "vite": "8.3.4"
+  }
+}
