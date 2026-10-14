@@ -1,0 +1,24 @@
+[package]
+name = "events"
+version = "0.1.0"
+edition = "2024"
+description = "Tail Aurora DSQL CDC records from a Kinesis data stream, with lag broken down by stage"
+publish = false
+
+[dependencies]
+anyhow = "1"
+aws-config = { version = "1.8", features = ["behavior-version-latest"] }
+aws-sdk-kinesis = "1"
+base64 = "0.22"
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+crc32c = "0.6"
+crossterm = "0.29"
+hdrhistogram = { version = "7", default-features = false }
+owo-colors = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs", "io-util"] }
+
+[profile.release]
+debug = "line-tables-only"
