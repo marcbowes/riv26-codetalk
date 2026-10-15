@@ -35,8 +35,8 @@ PostgreSQL. Then the agenda.
 
 | # | Step | Tool | Notes |
 |---|---|---|---|
-| 1 | Create cluster A in the console. Ask the AI to create cluster B. Connect to A with psql and type a small schema by hand (`sql/00-by-hand.sql`: posts + comments). | console, AI, psql | Cluster creation takes seconds. Cluster B exists for step 10. Clusters show up as random IDs, so mixing them up later is believable. |
-| 2 | Insert a post and a comment, by hand. | psql | Merge with 3 if short on time. |
+| 1 | Create cluster A in the console. Ask the AI to create cluster B. Connect to A with psql and type a small schema by hand (`sql/00-by-hand.sql`: posts + comments). `posts.id` is an identity column: typed without a cache it errors, which opens the sequences-in-a-distributed-database discussion; add `(CACHE 65536)`. | console, AI, psql | Cluster creation takes seconds. Cluster B exists for step 10. Clusters show up as random IDs, so mixing them up later is believable. |
+| 2 | Insert posts and a comment, by hand. Insert one post from pane B: its id is 65537, because each connection reserved its own block of ids. | psql ×2 | Merge with 3 if short on time. |
 | 3 | Recent posts; comments for a post. Then drop the toy schema and `\i sql/01-schema.sql` (users, slugs, bodies, JSONB metadata) plus `02-first-rows.sql`. | psql | Very little pasting in this talk: type the small things, `\i` the real schema. |
 | 4 | **Background AI task:** Drizzle API (ListPosts, GetPost, ListComments, AddComment, ...) with a CLI and a server. The agent starts the server and checks it with the CLI. | AI | Longest task, so start it early. It must finish by step 8. |
 | 5 | **Background AI task:** generate sample data. Then `EXPLAIN ANALYZE VERBOSE` on the step-3 queries: plan plus DPU cost. | AI, psql | Size the data so the load finishes in ~2 min and the plans are clearly bad. |
