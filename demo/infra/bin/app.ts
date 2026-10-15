@@ -6,11 +6,13 @@
 //   Dat401-Api-<A>, Dat401-Api-<B>           Lambda + function URL per Region
 //   Dat401-Web                               S3 + CloudFront UI (REGION_A)
 //   Dat401-Dashboard                         CloudWatch dashboard (REGION_A)
+//   Dat401-Loadgen                           EC2 load generator host (REGION_A)
 import * as cdk from "aws-cdk-lib";
 import { ApiStack } from "../lib/api-stack";
 import { ClusterStack } from "../lib/cluster-stack";
 import { clusterIdFromArn, readConfig } from "../lib/config";
 import { DashboardStack } from "../lib/dashboard-stack";
+import { LoadgenStack } from "../lib/loadgen-stack";
 import { STACKS } from "../lib/names";
 import { WebStack } from "../lib/web-stack";
 
@@ -48,6 +50,14 @@ if (cfg.clusterArns) {
     description: "DAT401 demo: cross-Region CloudWatch dashboard",
     witnessRegion: cfg.witnessRegion,
     clusters: cfg.regions.map((region) => ({ region, clusterId: clusterIdFromArn(arns[region] as string) })),
+  });
+
+  new LoadgenStack(app, STACKS.loadgen, {
+    env: env(cfg.regionA),
+    description: "DAT401 demo: load generator host (EC2, reached via SSM)",
+    repoUrl: cfg.repoUrl,
+    instanceType: cfg.loadgenInstanceType,
+    ...(cfg.loadgenAz ? { availabilityZone: cfg.loadgenAz } : {}),
   });
 
   // Needs both function URLs (one is another Region's output), so deploy.sh passes them in.

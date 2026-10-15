@@ -5,6 +5,7 @@
 //   clusterArns=<arnA>,<arnB>         every other deploy (peering + API wiring)
 //   functionUrls=<region>=<url>,<region>=<url>   adds the Web stack (API origins)
 //   distributionArn=<arn>             lets that CloudFront distribution call the APIs
+//   repoUrl, loadgenInstanceType, loadgenAz   the load generator host (defaults below)
 //
 // Without clusterPhase=create the cluster ARNs are mandatory: synthesizing a
 // cluster stack without its peers and deploying it would un-peer the clusters.
@@ -24,6 +25,10 @@ export interface DemoConfig {
   functionUrls: Record<string, string> | undefined;
   /** The Web stack's distribution, granted lambda:InvokeFunctionUrl on both APIs. */
   distributionArn: string | undefined;
+  /** Git URL the load generator host clones. */
+  repoUrl: string;
+  loadgenInstanceType: string;
+  loadgenAz: string | undefined;
 }
 
 const REGION_RE = /^[a-z]{2}(-[a-z]+)+-\d$/;
@@ -107,5 +112,8 @@ export function readConfig(app: App): DemoConfig {
     clusterArns,
     functionUrls,
     distributionArn,
+    repoUrl: ctx(app, "repoUrl") ?? "https://github.com/marcbowes/riv26-codetalk.git",
+    loadgenInstanceType: ctx(app, "loadgenInstanceType") ?? "c7g.4xlarge",
+    loadgenAz: ctx(app, "loadgenAz"),
   };
 }

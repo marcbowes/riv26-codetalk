@@ -24,9 +24,9 @@ scaling with no provisioning.
 |---|---|
 | `api/` | Hono app (`src/app.ts`), Drizzle schema (`src/schema.ts`) and queries; `src/local.ts` (dev server), `src/lambda.ts` (handler) |
 | `db/` | `setup.ts`: idempotent schema, async indexes, `blog_app` role, `AWS IAM GRANT`s, seed data |
-| `infra/` | CDK app: `Dat401-Cluster-<region>` ×2, `Dat401-Api-<region>` ×2, `Dat401-Web`, `Dat401-Dashboard` |
+| `infra/` | CDK app: `Dat401-Cluster-<region>` ×2, `Dat401-Api-<region>` ×2, `Dat401-Web`, `Dat401-Dashboard`, `Dat401-Loadgen` (EC2 load generator host) |
 | `web/` | Vite + React UI, reads `/config.json` at runtime |
-| `loadgen/` | Rust load generator (see its own README) |
+| `loadgen/` | Rust load generator (see its own README); `--run-on-ec2` runs it on the `Dat401-Loadgen` host over SSM |
 
 ## Prerequisites
 

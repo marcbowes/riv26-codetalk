@@ -6,6 +6,7 @@ export const STACKS = {
   api: (region: string) => `Dat401-Api-${region}`,
   web: "Dat401-Web",
   dashboard: "Dat401-Dashboard",
+  loadgen: "Dat401-Loadgen",
 } as const;
 
 /** Lambda function name (per Region; the same name in each). */

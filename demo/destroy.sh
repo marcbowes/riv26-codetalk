@@ -19,6 +19,7 @@ STACK_API_A="Dat401-Api-$REGION_A"
 STACK_API_B="Dat401-Api-$REGION_B"
 STACK_WEB="Dat401-Web"
 STACK_DASHBOARD="Dat401-Dashboard"
+STACK_LOADGEN="Dat401-Loadgen"
 
 export AWS_PAGER=""
 
@@ -53,7 +54,7 @@ if [[ "$FORCE" != "1" ]]; then
   cat <<EOF
 This permanently deletes the DAT401 demo in account $ACCOUNT:
   clusters ${CLUSTER_ID_A:-?} ($REGION_A) and ${CLUSTER_ID_B:-?} ($REGION_B), with all their data,
-  both APIs, the web UI and the dashboard.
+  both APIs, the web UI, the dashboard and the load generator host.
 EOF
   read -r -p "Type 'destroy' to continue: " answer
   [[ "$answer" == "destroy" ]] || die "aborted"
@@ -105,7 +106,7 @@ delete_stacks() {
 }
 
 log "Stacks (reverse deploy order)"
-delete_stacks "$REGION_A:$STACK_DASHBOARD" "$REGION_A:$STACK_WEB"
+delete_stacks "$REGION_A:$STACK_LOADGEN" "$REGION_A:$STACK_DASHBOARD" "$REGION_A:$STACK_WEB"
 delete_stacks "$REGION_A:$STACK_API_A" "$REGION_B:$STACK_API_B"
 # Together: a peered cluster sits in PENDING_DELETE until its peer is deleted too.
 delete_stacks "$REGION_A:$STACK_CLUSTER_A" "$REGION_B:$STACK_CLUSTER_B"
