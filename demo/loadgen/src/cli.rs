@@ -209,6 +209,15 @@ pub struct Args {
     #[arg(long, value_name = "FILE", help_heading = "Output")]
     pub report: Option<PathBuf>,
 
+    /// Run this same command on the EC2 load generator host (outputs.json `loadgen`, from
+    /// demo/deploy.sh) over SSM, instead of here; starts the host if it's stopped
+    #[arg(long, help_heading = "Remote")]
+    pub run_on_ec2: bool,
+
+    /// Stop the EC2 load generator host and exit
+    #[arg(long, help_heading = "Remote", conflicts_with = "run_on_ec2")]
+    pub stop_ec2: bool,
+
     /// Title for the live display
     #[arg(
         long,

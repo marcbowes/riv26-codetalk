@@ -210,17 +210,34 @@ cargo run --release --example mock_server -- --region us-east-1 --region us-east
 ./target/release/loadgen --outputs /tmp/mock-outputs.json --rps 2000 --ramp 10
 ```
 
-**Stage, EC2 close to the API (big).**
-1. Start an instance in us-west-2 (c7i.4xlarge or c7g.4xlarge, Amazon Linux 2023).
-2. Run [`ec2-setup.sh`](ec2-setup.sh).
-3. `scp demo/outputs.json` up to it.
-4. Run inside `tmux`, so a dropped SSH session doesn't stop the load:
+**Stage, from the EC2 host (big).** `demo/deploy.sh` creates the
+`Dat401-Loadgen` stack: a c7g.4xlarge in us-west-2, with no inbound ports,
+reached through SSM Session Manager. First boot installs Rust, clones this
+repo from GitHub and builds `loadgen` and `events` (about 5 minutes,
+logged to `/var/log/dat401-setup.log`). Then, from your laptop:
 
 ```sh
-./target/release/loadgen --rps 2000 --ramp 30 --duration 2m      # smoke test first
-./target/release/loadgen --rps 20000                             # the finale: 60 s ramp, then hold
-./target/release/loadgen --rps 20000 --ramp 90 --report finale.json
+./target/release/loadgen --run-on-ec2 --rps 2000 --ramp 30 --duration 2m   # smoke test first
+./target/release/loadgen --run-on-ec2 --rps 20000                          # the finale: 60 s ramp, then hold
+./target/release/loadgen --stop-ec2                                        # afterwards (~$0.58/h while running)
 ```
+
+`--run-on-ec2` runs *the same command* on the host, and the live display
+shows in your terminal. Keys work, and Ctrl-C/`q` stop it. Each run:
+
+1. Starts the host if it's stopped, and waits for SSM.
+2. Waits for the first-boot build if it's still running.
+3. Runs `git pull` and an incremental build, so the host runs what's pushed
+   to `main`.
+4. Copies your `outputs.json` across (unless you passed `--url`).
+
+It needs the AWS CLI and the
+[Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+locally, plus credentials for the account (AWS_PROFILE works). `--report`
+paths are on the host.
+
+[`ec2-setup.sh`](ec2-setup.sh) is the manual alternative, for a host you
+start yourself.
 
 20,000 req/s is ~300 concurrent executions per Region, well inside today's
 quota, with room for cold-start spikes. Use `+` live for a second climb.

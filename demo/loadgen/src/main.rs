@@ -8,6 +8,7 @@ mod control;
 mod mix;
 mod monitor;
 mod pool;
+mod remote;
 mod runner;
 mod stats;
 mod summary;
@@ -23,6 +24,20 @@ use clap::Parser;
 
 fn main() -> ExitCode {
     let args = cli::Args::parse();
+    if args.stop_ec2 || args.run_on_ec2 {
+        let result = if args.stop_ec2 {
+            remote::stop_ec2(args.outputs.as_deref())
+        } else {
+            remote::run_on_ec2(args.outputs.as_deref(), !args.urls.is_empty())
+        };
+        return match result {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let fd_limit = util::raise_fd_limit();
     let threads = args
         .threads

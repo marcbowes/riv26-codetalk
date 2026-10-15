@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the DAT401 load generator on Amazon Linux 2023, close to the API.
 #
-# Run as ec2-user on a fresh instance in us-west-2 (where Region A's API
+# Manual alternative to the Dat401-Loadgen stack (demo/deploy.sh), whose first
+# boot does all of this. Run as ec2-user on a fresh instance in us-west-2 (where Region A's API
 # lives); a c7i.4xlarge / c7g.4xlarge (16 vCPU) is plenty.
 #
 #   curl -sSfO https://raw.githubusercontent.com/marcbowes/riv26-codetalk/main/demo/loadgen/ec2-setup.sh
