@@ -1,6 +1,9 @@
 # Amazon Aurora DSQL: A developer's perspective (DAT401, re:Invent 2026)
 
-Code and scripts for the code talk. [OUTLINE.md](OUTLINE.md) has the run of show.
+Code and scripts for the code talk.
+
+- **[TALK.md](TALK.md)**: the full talk, written out. Follow along from here if you couldn't attend.
+- [OUTLINE.md](OUTLINE.md): planning notes and run of show.
 
 | Path | What | Used in |
 |---|---|---|
