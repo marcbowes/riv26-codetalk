@@ -6,3 +6,6 @@ target/
 .env.*
 .DS_Store
 .claude/
+
+# Rehearsal scratch (AI-generated code from dry runs)
+dryrun*/
