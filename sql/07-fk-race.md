@@ -21,12 +21,12 @@ SELECT id AS user_id FROM users WHERE username = 'raluca' \gset
 | | `COMMIT;` → **succeeds** |
 
 They wrote different rows, so OCC sees no conflict. Now there are orphans: B's
-comment, plus the step-2 "First!" comment, since nothing cascaded:
+comment, plus the step-2 "First!" comment, since nothing cascaded. Look them up
+by `post_id`: that uses step 6's `comments_post_idx`, whereas an anti-join over
+a million comments would be a slow full scan on stage.
 
 ```sql
-SELECT c.id, c.body
-FROM comments c LEFT JOIN posts p ON p.id = c.post_id
-WHERE p.id IS NULL;
+SELECT id, body FROM comments WHERE post_id = :'post_id';   -- 2 rows
 ```
 
 ## 2. Add the FK: validation fails on the orphan
@@ -52,8 +52,7 @@ already there.
 ## 3. Clean up, validate again
 
 ```sql
-DELETE FROM comments c
-WHERE NOT EXISTS (SELECT 1 FROM posts p WHERE p.id = c.post_id);
+DELETE FROM comments WHERE post_id = :'post_id';
 
 ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;
 CALL sys.wait_for_job('<job_id>');                                -- succeeded = t
@@ -61,7 +60,14 @@ CALL sys.wait_for_job('<job_id>');                                -- succeeded =
 
 ## 4. Re-run the race: B fails at commit
 
-Re-insert a post first (`\i sql/02-first-rows.sql` or a fresh slug), then
+Re-insert the post first (not `02-first-rows.sql`: its users already exist):
+
+```sql
+INSERT INTO posts (author_id, slug, title, body)
+SELECT id, 'hello-dsql', 'Hello, DSQL', 'again' FROM users WHERE username = 'marc';
+```
+
+Then
 **reconnect pane B (`\c`)** and `\gset` again in both panes.
 
 Why reconnect: pane B's session still has the schema from before the
