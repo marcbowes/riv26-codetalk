@@ -18,7 +18,7 @@ bad run on stage can be swapped for a known-good one.
 |---|---|---|---|
 | 1 | [01-create-cluster.md](01-create-cluster.md) | < 1 min | Clusters create in seconds; the console cluster is already up |
 | 4 | [04-api.md](04-api.md) | ~8 min, in the background | Steps 5–7 happen meanwhile |
-| 5 | [05-sample-data.md](05-sample-data.md) | < 2 min | The per-transaction limits (3,000 rows / 10 MiB), and why the script batches |
+| 5 | (pre-built: `sql/05-load-sample-data.sh`) | ~15 s | The per-transaction limits (3,000 rows / 10 MiB), and why the script batches. [05-sample-data.md](05-sample-data.md) is the prompt that produced the first version |
 | 8 | [08-html.md](08-html.md) | ~3 min, in the background | Step 9 happens meanwhile |
 
 Placeholders: `$CLUSTER_ENDPOINT` is cluster A's endpoint, e.g.
