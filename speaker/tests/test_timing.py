@@ -87,7 +87,7 @@ class ScheduleDelta(unittest.TestCase):
     def test_behind_amber_then_red(self):
         self.assertEqual(timing.schedule(1110 + 45, True, 1110), ("warn", "+45s", "BEHIND"))
         self.assertEqual(timing.schedule(1110 + 89, True, 1110)[0], "warn")
-        self.assertEqual(timing.schedule(1110 + 90, True, 1110), ("over", "+2m", "BEHIND"))
+        self.assertEqual(timing.schedule(1110 + 90, True, 1110), ("over", "+1m", "BEHIND"))
         self.assertEqual(timing.schedule(1110 + 120, True, 1110), ("over", "+2m", "BEHIND"))
         self.assertEqual(timing.schedule(1110 + 600, True, 1110), ("over", "+10m", "BEHIND"))
 
@@ -102,12 +102,33 @@ class ScheduleDelta(unittest.TestCase):
         self.assertEqual(timing.schedule(20 * 60 + 30, True, planned)[1], "+2m")
         self.assertEqual(timing.schedule(17 * 60 + 30, True, planned)[1], "-1m")
 
+    def test_planned_window(self):
+        self.assertEqual(timing.planned_window(0, 300, 0, 1), (0, 300))          # one-beat step
+        self.assertEqual(timing.planned_window(1020, 1200, 6, 12), (1110, 1125))
+        self.assertEqual(timing.planned_window(1020, 1200, 11, 12), (1185, 1200))
+        self.assertIsNone(timing.planned_window(None, None, 0, 1))
+
+    def test_on_time_anywhere_inside_the_beat(self):
+        # The bug: a one-beat intro at 2:33 read "+3m BEHIND".
+        intro = timing.planned_window(0, 300, 0, 1)
+        self.assertEqual(timing.schedule(153, True, intro), ("ok", "±0", "ON TIME"))
+        self.assertEqual(timing.schedule(1, True, intro)[0], "ok")
+        self.assertEqual(timing.schedule(299, True, intro)[0], "ok")
+        # Past the beat's end: behind by the overrun, not by the whole beat.
+        self.assertEqual(timing.schedule(300 + 45, True, intro), ("warn", "+45s", "BEHIND"))
+        self.assertEqual(timing.schedule(300 + 150, True, intro), ("over", "+2m", "BEHIND"))
+        # Before the beat's start: ahead by the gap.
+        mid = timing.planned_window(1020, 1200, 6, 12)                          # 18:30-18:45
+        self.assertEqual(timing.schedule(1050, True, mid), ("ahead", "-1m", "AHEAD"))
+        self.assertEqual(timing.schedule(1115, True, mid)[0], "ok")
+        self.assertEqual(timing.schedule(1125 + 60, True, mid), ("warn", "+1m", "BEHIND"))
+
     def test_fmt_delta(self):
         self.assertEqual(timing.fmt_delta(10), "±0")
         self.assertEqual(timing.fmt_delta(-10), "±0")
         self.assertEqual(timing.fmt_delta(59), "+59s")
         self.assertEqual(timing.fmt_delta(60), "+1m")
-        self.assertEqual(timing.fmt_delta(150), "+3m")
+        self.assertEqual(timing.fmt_delta(150), "+2m")   # whole minutes, rounded down
         self.assertEqual(timing.fmt_delta(-125), "-2m")
 
 

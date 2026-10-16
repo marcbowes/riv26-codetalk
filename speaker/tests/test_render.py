@@ -128,12 +128,12 @@ class Compose(unittest.TestCase):
         self.assertIn("0:00 / 10:00", head)
         self.assertIn("STOPPED", head)       # delta is "--" before s
         app.toggle_clock()
-        clock.t += 120 + 150                 # 2.5 min behind the plan of 2:00
+        clock.t += 120 + 150                 # 4:30; beat 1 of step 1 is planned for 2:00-2:17
         head = "\n".join(self._check(app, 30, 120)[:3])
         self.assertIn("BEHIND", head)
         self.assertIn("MIN", head)
         small = self._check(app, 12, 60)[0]
-        self.assertIn("+3m BEHIND", small)
+        self.assertIn("+2m BEHIND", small)  # 2 m 13 s past the beat, rounded down
 
     def test_notes_inline_when_narrow_sidebar_when_wide(self):
         app = make_app(parser.load(helpers.FIXTURE))

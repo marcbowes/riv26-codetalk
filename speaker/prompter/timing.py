@@ -109,21 +109,35 @@ def planned_at(start: Optional[int], end: Optional[int], beat: int, beats: int) 
     return start + (end - start) * beat / beats
 
 
+def planned_window(start: Optional[int], end: Optional[int], beat: int, beats: int) -> Optional[Tuple[float, float]]:
+    """When the presenter should be on `beat` (0-based) of a step with `beats`
+    beats in [start, end]: the beat's slice of the step, [planned_at(beat),
+    planned_at(beat + 1)]. Anywhere inside it is on time."""
+    lo = planned_at(start, end, beat, beats)
+    hi = planned_at(start, end, beat + 1, beats)
+    if lo is None or hi is None:
+        return None
+    return lo, hi
+
+
 def fmt_delta(delta: float) -> str:
-    """+150 -> '+3m' (rounded), -45 -> '-45s', 0 -> '±0'."""
-    s = int(round(abs(delta)))
+    """+150 -> '+2m' (whole minutes, rounded down), -45 -> '-45s', 0 -> '±0'."""
+    s = int(abs(delta))
     if s < ON_TIME:
         return "±0"
     sign = "+" if delta > 0 else "-"
     if s < 60:
         return "%s%ds" % (sign, s)
-    return "%s%dm" % (sign, int((s + 30) // 60))
+    return "%s%dm" % (sign, s // 60)
 
 
-def schedule(elapsed: float, started: bool, planned: Optional[float]) -> Tuple[str, str, str]:
+def schedule(elapsed: float, started: bool, planned) -> Tuple[str, str, str]:
     """The overall ahead/behind badge.
 
-    delta = elapsed - planned; positive means behind.
+    `planned` is the current beat's window (lo, hi) from planned_window, or a
+    single planned time. Inside the window you're on time; before it you're
+    ahead by lo - elapsed; after it you're behind by elapsed - hi. Positive
+    delta means behind.
     Returns (state, big, word):
       ('none',  '--',   'CLOCK STOPPED' / 'OFF SCRIPT')  before `s`, or no plan here
       ('ok',    '±0',   'ON TIME')    within ±30 s
@@ -135,7 +149,8 @@ def schedule(elapsed: float, started: bool, planned: Optional[float]) -> Tuple[s
         return "none", "--", "CLOCK STOPPED"
     if planned is None:
         return "none", "--", "OFF SCRIPT"
-    delta = elapsed - planned
+    lo, hi = planned if isinstance(planned, tuple) else (planned, planned)
+    delta = elapsed - lo if elapsed < lo else (elapsed - hi if elapsed > hi else 0.0)
     if abs(delta) < ON_TIME:
         return "ok", "±0", "ON TIME"
     if delta < 0:

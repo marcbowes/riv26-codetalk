@@ -123,12 +123,15 @@ class Navigation(unittest.TestCase):
         keys(a, "s")                       # pause
         self.clock.t += 50
         self.assertAlmostEqual(a.elapsed(), 60)
-        self.assertEqual(a.status()["delta"][:2], ("warn", "+1m"))   # 60 s into a 0:00 plan
+        # The opening is one beat planned for 0:00-2:00: on time anywhere inside it.
+        self.assertEqual(a.status()["delta"][:2], ("ok", "±0"))      # 1:00
         keys(a, "s")
+        self.clock.t += 140
+        self.assertEqual(a.status()["delta"][:2], ("warn", "+1m"))   # 3:20, 80 s past 2:00
         self.clock.t += 40
-        self.assertEqual(a.status()["delta"][:2], ("over", "+2m"))   # 100 s: red
-        keys(a, "g", "4", "\n")            # Step 4 planned at 8:00, clock 1:40
-        self.assertEqual(a.status()["delta"][:2], ("ahead", "-6m"))
+        self.assertEqual(a.status()["delta"][:2], ("over", "+2m"))   # 4:00: red
+        keys(a, "g", "4", "\n")            # Step 4 planned from 8:00, clock 4:00
+        self.assertEqual(a.status()["delta"][:2], ("ahead", "-4m"))
         self.assertEqual(a.status()["delta"][2], "AHEAD")
         keys(a, "t")
         self.assertEqual(a.elapsed(), 0)

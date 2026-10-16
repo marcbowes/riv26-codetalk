@@ -106,11 +106,18 @@ class App:
     # -------------------------------------------------------- pacing
 
     def planned(self) -> Optional[float]:
-        """Where the talk clock should be at the current beat."""
+        """Where the talk clock should be at the start of the current beat."""
         st = self.step
         if not st.talk:
             return None
         return timing.planned_at(st.start, st.end, self.beat, len(st.beats))
+
+    def planned_window(self):
+        """When the presenter should be on the current beat: (start, end)."""
+        st = self.step
+        if not st.talk:
+            return None
+        return timing.planned_window(st.start, st.end, self.beat, len(st.beats))
 
     def status(self) -> dict:
         el = self.elapsed()
@@ -126,7 +133,7 @@ class App:
             "planned": planned,
             "position": pos,
             "pace": timing.pace(el, st.start, st.end) if st.talk else ("none", "not in talk"),
-            "delta": timing.schedule(el, self.started, planned),
+            "delta": timing.schedule(el, self.started, self.planned_window()),
         }
 
     def _fallback_position(self) -> float:

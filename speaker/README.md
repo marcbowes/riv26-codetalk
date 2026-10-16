@@ -69,14 +69,21 @@ PgDn and PgUp step through beats because most presentation clickers send those k
 
 ### Pace
 
-- **Delta badge.** speaker works out where you should be by now: the current step's
-  planned start, plus its duration × the fraction of its beats you've passed. Then
-  delta = clock − that time.
+- **Delta badge.** Each beat gets an equal slice of its step's time budget. That
+  slice is the window in which you're on time. A one-beat step, like the intro, is
+  on time for its whole budget.
+  - Inside the current beat's window: on time.
+  - Before it starts: ahead by the gap.
+  - After it ends: behind by the overrun.
+
+  The badge shows:
   - `--`: the clock hasn't started (press `s`), or you're outside the talk flow.
-  - Green `±0` **ON TIME**: within ±30 s.
+  - Green `±0` **ON TIME**: inside the window, or within 30 s of it.
   - Green `-1m` **AHEAD**: more than 30 s early.
   - Amber `+45s` **BEHIND**: 30–90 s late.
   - Red `+2m` **BEHIND**: 90 s or more late.
+
+  Minutes are rounded down, so `+2m` means at least two minutes behind.
 - **Step indicator**, next to the step's window. Green while the clock is inside the
   window. Amber in its last minute, or its last half for steps shorter than two minutes.
   Red once you're past the step's end. Cyan if the clock hasn't reached the step yet.
