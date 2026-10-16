@@ -22,11 +22,11 @@ SELECT id AS user_id FROM users WHERE username = 'raluca' \gset
 
 They wrote different rows, so OCC sees no conflict. Now there are orphans: B's
 comment, plus the step-2 "First!" comment, since nothing cascaded. Look them up
-by `post_id`: that uses step 6's `comments_post_idx`, whereas an anti-join over
-a million comments would be a slow full scan on stage.
+by `post_id`: comments' primary key starts with it, so that's a range scan,
+whereas an anti-join over a million comments would be a slow full scan on stage.
 
 ```sql
-SELECT id, body FROM comments WHERE post_id = :'post_id';   -- 2 rows
+SELECT comment_id, body FROM comments WHERE post_id = :'post_id';   -- 2 rows
 ```
 
 ## 2. Add the FK: validation fails on the orphan
@@ -55,7 +55,7 @@ already there.
 DELETE FROM comments WHERE post_id = :'post_id';
 
 ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;
-CALL sys.wait_for_job('<job_id>');                                -- succeeded = t
+CALL sys.wait_for_job('<job_id>');                                -- succeeded = t (~16 s on 1M comments)
 ```
 
 ## 4. Re-run the race: B fails at commit

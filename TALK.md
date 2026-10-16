@@ -36,6 +36,7 @@ Timing, staging, and what to do if something goes wrong.
    - Concurrency is optimistic: a conflict surfaces at `COMMIT`, so retry
      the whole transaction.
    - Sequences need a cache.
+   - The primary key is the physical layout, so choose it for how you read.
    - Schema changes on big tables run as background jobs.
    - A transaction changes at most 3,000 rows.
 
@@ -178,36 +179,60 @@ This is the first place the distributed part shows. A sequence is one shared
 counter. In a database where many machines handle your inserts at once, you
 have to say how they share it:
 
+- **`CACHE 1`**: every ID comes from the shared counter. Dense and in order,
+  but each one is a round trip. In rehearsal, a single 3,000-row `INSERT` that
+  generated its IDs this way took **20.6 seconds**, about 7 ms per row.
 - **`CACHE 65536`**: each connection reserves a block of IDs and hands them
-  out locally. No coordination per insert, but IDs have gaps and don't follow
-  commit order.
-- **`CACHE 1`**: every ID comes from the shared counter. Dense, but every
-  insert goes through that one counter.
+  out locally. The same 3,000 rows took **117 ms**. But IDs have gaps, and
+  they don't follow commit order.
 
-(That's also why `serial` doesn't exist here.) For posts, blocks are fine:
+(That's also why `serial` doesn't exist here.) Posts are written rarely: a few
+an hour, not a few thousand a second. An extra few milliseconds per post buys
+dense IDs in order, so posts get `CACHE 1`:
 
 ```sql
 CREATE TABLE posts (
-  id bigint GENERATED ALWAYS AS IDENTITY (CACHE 65536) PRIMARY KEY,
+  id bigint GENERATED ALWAYS AS IDENTITY (CACHE 1) PRIMARY KEY,
   title text NOT NULL,
   created_at timestamptz DEFAULT now()
 );
 ```
 
-Comments are the high-write table. They get UUIDs, which need no counter at all:
+Comments are the opposite: the high-write table. Their IDs are random UUIDs,
+which need no counter at all. And the primary key starts with the *post*:
 
 ```sql
 CREATE TABLE comments (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   post_id bigint NOT NULL,
+  comment_id uuid NOT NULL DEFAULT gen_random_uuid(),
   body text NOT NULL,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (post_id, comment_id)
 );
 ```
 
+This is the schema-design choice of the talk. Random keys and sequential keys
+pull in opposite directions:
+
+- **Random keys go wide.** Inserts land all over the key space, so the work
+  spreads across the whole fleet. That's DynamoDB's partition-key advice, and
+  it's why comment IDs are UUIDs.
+- **Keys that group things go fast.** DSQL stores a table by its primary key,
+  as we'll see in step 6. With `post_id` first, a post's comments sit next to
+  each other, and "load the comments for this post" becomes one range read. It
+  needs no secondary index.
+
+The price is a hotspot: every comment on one post lands in the same part of
+the key space. That's fine for a blog. Comments on a single post never need to
+scale without limit; comments across *all* posts do, and they still spread out.
+
 > **★ DSQL difference: sequences make you choose.** Identity columns and
-> sequences work, but you pick the trade-off explicitly: throughput (cache)
-> or density (`CACHE 1`). UUIDs avoid the question.
+> sequences work, but you pick the trade-off explicitly: `CACHE 1` for dense
+> and ordered, a big cache for throughput. UUIDs avoid the question.
+
+> **★ DSQL difference: the primary key is your physical layout.** Choose it
+> for how you read. Random where you need writes to spread, grouped where you
+> read related rows together.
 
 <details>
 <summary>Presenter notes</summary>
@@ -225,15 +250,15 @@ INSERT INTO posts (title) VALUES ('Second post') RETURNING id;      -- 2
 INSERT INTO comments (post_id, body) VALUES (1, 'First!');
 ```
 
-Now the same thing from a **second psql session** (pane B):
+Now from a **second psql session** (pane B):
 
 ```sql
-INSERT INTO posts (title) VALUES ('From pane B') RETURNING id;      -- 65537
+INSERT INTO posts (title) VALUES ('From pane B') RETURNING id;      -- 3
 ```
 
-That's the cache made visible. Pane B's connection reserved its own block of
-65,536 IDs, starting where pane A's ended. No coordination between them, and
-also no promise that IDs follow time order.
+Still dense: with `CACHE 1`, pane B's insert went to the same shared counter.
+With `CACHE 65536`, pane B's connection would have reserved its own block, and
+this post would have been number 65,537.
 
 ### Step 3 · Queries · 10:30–12:00
 
@@ -257,9 +282,10 @@ DROP TABLE comments, posts;
 \i sql/02-first-rows.sql
 ```
 
-[`sql/01-schema.sql`](sql/01-schema.sql) is plain PostgreSQL DDL: UUID keys, a
-`UNIQUE` username and slug, and `metadata jsonb` for each post's category, tags
-and reading time.
+[`sql/01-schema.sql`](sql/01-schema.sql) is plain PostgreSQL DDL with the same
+key design. Posts get a `CACHE 1` identity, users get UUIDs, and comments are
+keyed by `(post_id, comment_id)`. It adds a `UNIQUE` username and slug, and
+`metadata jsonb` for each post's category, tags and reading time.
 
 ### Steps 4 and 5 · An API by AI, a million rows, and a bad plan · 12:00–17:00
 
@@ -317,7 +343,38 @@ transaction.
 > at most 3,000 rows and 10 MiB, and can run for at most 5 minutes. Bulk loads
 > batch, which is good practice anyway. Here, 8 batches run in parallel.
 
-**Now look at a query plan.** The post page lists a post's comments:
+**Now look at a query plan.** First the home page, the 20 newest posts:
+
+```sql
+EXPLAIN ANALYZE VERBOSE
+SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
+```
+```
+ Limit  (... actual time=211.345..211.349 rows=20 loops=1)
+   ->  Sort  (... rows=100001 ...)
+         Sort Key: posts.created_at DESC
+         Sort Method: top-N heapsort  Memory: 29kB
+         ->  Index Only Scan using posts_pkey on public.posts  (... actual time=0.726..191.252 rows=100002 loops=1)
+ Execution Time: 211.399 ms
+ Statement DPU Estimate:
+   Compute: 0.21413 DPU
+   Read: 117.64496 DPU
+   Write: 0.00000 DPU
+   Total: 117.85908 DPU
+```
+
+It read all 100,000 posts and sorted them to return 20. That's an ordinary
+PostgreSQL plan, but look at the bottom: **Statement DPU Estimate**. A DPU is
+what DSQL bills you for, so this plan tells you what the query *costs*, not
+just how long it takes. This one costs about 118 DPU every time someone loads
+the home page. We'll fix it in step 6.
+
+> **★ DSQL difference: the plan shows the price.** `EXPLAIN ANALYZE VERBOSE`
+> ends with an estimated DPU cost per statement, broken down into compute,
+> read, write and multi-Region write. You can see a query's bill before it
+> reaches production.
+
+Now the post page, a post's comments, out of a million:
 
 ```sql
 SELECT post_id FROM comments LIMIT 1 \gset
@@ -325,35 +382,19 @@ EXPLAIN ANALYZE VERBOSE
 SELECT body, created_at FROM comments WHERE post_id = :'post_id' ORDER BY created_at;
 ```
 ```
- Sort  (... rows=10 ...)
+ Sort  (... actual time=0.380..0.382 rows=9 loops=1)
    Sort Key: comments.created_at
-   ->  Full Scan (btree-table) on public.comments  (... actual time=0.653..1030.771 rows=10 loops=1)
-             Rows Removed by Filter: 999991
- Execution Time: 1030.908 ms
- Statement DPU Estimate:
-   Compute: 1.03405 DPU
-   Read: 189.87274 DPU
-   Write: 0.00000 DPU
-   Total: 190.90679 DPU
+   ->  Index Only Scan using comments_pkey on public.comments  (... actual time=0.306..0.335 rows=9 loops=1)
+         Index Cond: (comments.post_id = '1001'::bigint)
+ Execution Time: 0.432 ms
+   Total: 0.01448 DPU
 ```
 
-It read a million rows to return ten. That's an ordinary PostgreSQL plan, but
-look at the bottom: **Statement DPU Estimate**. A DPU is what DSQL bills you
-for. This plan tells you what the query *costs*, not just how long it takes.
-This one costs about 191 DPU every time someone opens a post.
-
-> **★ DSQL difference: the plan shows the price.** `EXPLAIN ANALYZE VERBOSE`
-> ends with an estimated DPU cost per statement, broken down into compute,
-> read, write and multi-Region write. You can see a query's bill before it
-> reaches production.
-
-The home page query is the other one to check:
-
-```sql
-EXPLAIN ANALYZE VERBOSE
-SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
-```
-That's a scan of all 100,000 posts plus a top-N sort: about 216 ms and 121 DPU.
+**0.4 ms and 0.01 DPU, with no index added.** That's the primary key from
+step 1 paying off: the comments for this post are one contiguous range of
+`comments_pkey`. For comparison, in rehearsal with a plain UUID primary key,
+this same query was a full scan of all million comments: **1,031 ms and
+191 DPU**.
 
 <details>
 <summary>Presenter notes</summary>
@@ -366,18 +407,17 @@ That's a scan of all 100,000 posts plus a top-N sort: about 216 ms and 121 DPU.
   (hence "calls it over HTTP" in the prompt).
 </details>
 
-### Step 6 · Indexes, without downtime · 17:00–20:00
+### Step 6 · An index, without downtime · 17:00–20:00
 
-The comments index first. `post_id` to find them, `created_at` so they come back
-already in order:
+The comments don't need an index. The home page does. The obvious one:
 
 ```sql
-CREATE INDEX ASYNC comments_post_idx ON comments (post_id, created_at);
+CREATE INDEX ASYNC posts_created_at_idx ON posts (created_at);
 ```
 ```
            job_id
 ----------------------------
- bk7zsxu5xjh6pgsaskjqxpb5ty
+ sdtn7gjobfeglgjbysgk3pog4i
 ```
 
 It returned instantly with a job ID. The index builds in the background, on a
@@ -385,34 +425,16 @@ table that keeps taking writes:
 
 ```sql
 SELECT job_id, status, object_name FROM sys.jobs WHERE job_type = 'INDEX_BUILD';
-CALL sys.wait_for_job('bk7zsxu5xjh6pgsaskjqxpb5ty');      -- about 45 s on 1M rows
+CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');      -- seconds on 100k rows; ~45 s for 1M
 ```
 
 > **★ DSQL difference: schema changes are jobs.** `CREATE INDEX ASYNC`
 > (and, in step 7, `ALTER TABLE ASYNC ... VALIDATE CONSTRAINT`) runs as a
-> background job you can watch in `sys.jobs`. A million-row table gets a new
-> index with no lock and no maintenance window.
+> background job you can watch in `sys.jobs`. A big table gets a new index
+> with no lock and no maintenance window.
 
-Same query, run again (↑ in psql):
-
-```
- Index Scan using comments_post_idx on public.comments  (... actual time=1.658..1.671 rows=10 loops=1)
-   Index Cond: (comments.post_id = '...'::uuid)
- Execution Time: 1.717 ms
-   Total: 0.04104 DPU
-```
-
-From **1,031 ms to 1.7 ms**, and from **191 DPU to 0.04**. The Sort node has
-gone too, because the index already returns rows in `created_at` order.
-
-Now the home page. The obvious index:
-
-```sql
-CREATE INDEX ASYNC posts_created_at_idx ON posts (created_at);
-```
-
-Wait for it, run the `EXPLAIN` again, and it's **exactly the same plan**: a full
-scan plus a sort, about 216 ms. The planner ignored our index.
+Run the home page `EXPLAIN` again (↑ in psql), and it's **exactly the same
+plan**: a full scan plus a sort, about 211 ms. The planner ignored our index.
 
 Here's why. Look at how DSQL stores a table:
 
@@ -443,7 +465,7 @@ CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
    Total: 0.04336 DPU
 ```
 
-**216 ms to 0.9 ms.** It's an index-only scan, read backwards for the `DESC`,
+**211 ms to 0.9 ms**, and **118 DPU to 0.04**. It's an index-only scan, read backwards for the `DESC`,
 so there's no sort and no lookups.
 
 > **★ DSQL difference: covering indexes matter.** Every table is stored by
@@ -479,7 +501,7 @@ SELECT id AS user_id FROM users WHERE username = 'raluca' \gset
 Both committed:
 
 ```sql
-SELECT id, body FROM comments WHERE post_id = :'post_id';   -- 2 rows, on a post that doesn't exist
+SELECT comment_id, body FROM comments WHERE post_id = :'post_id';   -- 2 rows, on a post that doesn't exist
 ```
 
 DSQL uses **optimistic concurrency control**. Transactions don't take locks
@@ -508,7 +530,7 @@ and it found our orphans. Clean them up and validate again:
 ```sql
 DELETE FROM comments WHERE post_id = :'post_id';
 ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;
-CALL sys.wait_for_job('<job_id>');                                 -- succeeded = t (about 40 s on 1M rows)
+CALL sys.wait_for_job('<job_id>');                                 -- succeeded = t (about 16 s on 1M rows)
 ```
 
 Now the same race again. Put the post back, reconnect pane B (`\c`), and
@@ -835,10 +857,12 @@ What we did in 45 minutes, and what DSQL did differently:
 |---|---|
 | Created a cluster | Seconds; nothing to size, patch or fail over |
 | Connected with psql | IAM tokens, no passwords |
-| Wrote a schema | Sequences need a cache; UUIDs need nothing |
+| Wrote a schema | Sequences need a cache (`CACHE 1` for low-rate tables); UUIDs need nothing |
+| Chose primary keys | The key is the physical layout: random to spread writes, grouped to read together |
 | Loaded 1.1M rows | 3,000 rows per transaction; batch and parallelize |
 | Read a query plan | The plan shows the DPU cost |
-| Added indexes | Built as background jobs; covering indexes matter |
+| Loaded a post's comments | A primary-key range scan: 0.4 ms, no index |
+| Added an index | Built as a background job; covering indexes matter |
 | Raced two transactions | Optimistic: conflicts at `COMMIT`; retry the transaction |
 | Added a foreign key | Validated as a job; enforced without locks |
 | Indexed JSONB | Compressed by default; expression indexes, no GIN |
