@@ -60,7 +60,8 @@ Timing, staging, and what to do if something goes wrong.
 | 0:00–5:00 | Intro: what DSQL is, the agenda |
 | 5:00–35:00 | Build it: steps 1–12 (console, psql, AI agent) |
 | 35:00–40:00 | The polished app, in two Regions |
-| 40:00–45:00 | Scale: 20,000 requests per second |
+| 40:00–44:00 | Scale: 20,000 requests per second |
+| 44:00–45:00 | Wrap-up |
 
 ## Following along
 
@@ -436,8 +437,10 @@ plan**: a full scan plus a sort, about 208 ms. The planner ignored our index.
 
 Here's why. Look at how DSQL stores a table:
 
-```
+```sql
 \d+ posts
+```
+```
 ...
 Indexes:
     "posts_pkey" PRIMARY KEY, btree_index (id) INCLUDE (author_id, slug, title, body, metadata, created_at)
@@ -455,6 +458,14 @@ So give the index what the query needs:
 
 ```sql
 CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
+CALL sys.wait_for_job('<job_id>');
+```
+
+Then the home page query once more:
+
+```sql
+EXPLAIN ANALYZE VERBOSE
+SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
 ```
 ```
  Limit  (... actual time=0.654..0.691 rows=20 loops=1)
@@ -534,7 +545,7 @@ CALL sys.wait_for_job('<job_id>');                                 -- succeeded 
 Now the same race again. Put the post back, reconnect pane B (`\c`), and
 re-run the two `\gset` lines in both panes:
 
-```sql
+```sql pane A
 INSERT INTO posts (author_id, slug, title, body)
 SELECT id, 'hello-dsql', 'Hello, DSQL', 'again' FROM users WHERE username = 'marc';
 ```
@@ -544,7 +555,7 @@ SELECT id, 'hello-dsql', 'Hello, DSQL', 'again' FROM users WHERE username = 'mar
 | 1 | `BEGIN;` | |
 | 2 | `DELETE FROM posts WHERE id = :'post_id';` | |
 | 3 | | `BEGIN;` |
-| 4 | | `INSERT INTO comments ...;` → ok |
+| 4 | | `INSERT INTO comments (post_id, user_id, body) VALUES (:'post_id', :'user_id', 'Nice post!');` → ok |
 | 5 | `COMMIT;` → ok | |
 | 6 | | `COMMIT;` → `ERROR: change conflicts with another transaction (OC000)` |
 
@@ -618,6 +629,15 @@ PostgreSQL's answer is an index on the expression:
 CREATE INDEX ASYNC posts_category_idx ON posts ((metadata->>'category'), created_at);
 CALL sys.wait_for_job('<job_id>');                     -- about 11 s
 ```
+
+The category query again (↑ in psql):
+
+```sql
+EXPLAIN ANALYZE VERBOSE
+SELECT title, created_at FROM posts
+WHERE metadata->>'category' = 'databases'
+ORDER BY created_at DESC LIMIT 20;
+```
 ```
  Limit  (... actual time=2.108..2.137 rows=20 loops=1)
    ->  Index Scan Backward using posts_category_idx on public.posts
@@ -657,6 +677,8 @@ ticking over.
 
 We don't need it, so let's delete it. I select it, choose Delete, type the
 confirmation...
+
+<!-- beat -->
 
 ...and that was cluster A. The one with our blog in it.
 
@@ -759,6 +781,8 @@ The same blog, finished ([`demo/`](demo)):
   the same schema choices as the live build: UUID keys, comments keyed by
   `(post_id, comment_id)`, and covering indexes for the home and category pages.
 
+<!-- beat -->
+
 The page has one column per Region:
 - **Round trip:** browser to that Region and back. From Las Vegas, us-west-2
   is closer.
@@ -768,7 +792,9 @@ The page has one column per Region:
 Open a post; with "Keep both columns on the same page" on, both columns follow.
 Write a comment in the us-west-2 column, and watch us-east-1:
 
-> *Posted in us-west-2, read here N ms after it was saved.*
+```
+Posted in us-west-2, read here N ms after it was saved.
+```
 
 That's the next read in the other Region, not a replication delay we're
 waiting out. In our measurements, a write spent about **80–190 ms** in the
@@ -780,20 +806,25 @@ blog that's 90% reads, that's the right trade-off.
 > primary to fail over to, and no stale replica to route around.
 
 <details>
-<summary>Presenter notes and following along</summary>
+<summary>Presenter notes</summary>
 
-- Deploy with `cd demo && ./deploy.sh` (about 10 minutes the first time; it's
-  idempotent). Check readiness with `./preflight.sh`, which also warms both
-  APIs so the first click isn't a cold start.
-- Architecture: one CloudFront distribution serves the page from S3, and
-  routes `/api/<region>/*` to an IAM-authenticated Lambda function URL in each
-  Region (only the distribution can call them). Details in
-  [`demo/README.md`](demo/README.md).
+- `demo/preflight.sh` ~30 minutes before warms both APIs, so the first click
+  isn't a cold start.
+- One sentence on the architecture: one CloudFront distribution serves the page
+  from S3 and routes `/api/<region>/*` to an IAM-authenticated Lambda function URL
+  in each Region (only the distribution can call them).
+</details>
+
+<details>
+<summary>Following along: deploy it yourself</summary>
+
+`cd demo && ./deploy.sh` (about 10 minutes the first time; it's idempotent), then
+`./preflight.sh`. Details in [`demo/README.md`](demo/README.md).
 </details>
 
 ---
 
-## 40:00–45:00 · Scale
+## 40:00–44:00 · Scale
 
 Everything so far has been one person clicking. Here's 20,000 requests a
 second. The load generator runs on an EC2 host in us-west-2, and its display
@@ -849,7 +880,7 @@ watch both graphs fall to zero.
 
 ---
 
-## Wrap-up
+## 44:00–45:00 · Wrap-up
 
 What we did in 45 minutes, and what DSQL did differently:
 
