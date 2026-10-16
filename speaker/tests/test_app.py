@@ -148,6 +148,30 @@ class Navigation(unittest.TestCase):
         self.assertAlmostEqual(a.planned(), 120 + 120 * 3 / 7)   # 3 of 7 beats passed
         self.assertEqual(a.status()["delta"][0], "ahead")  # 140 vs 171 s
 
+    def test_clock_to_plan(self):
+        a = self.app
+        # After a restart: jump to step 2/3 (planned 4:00-8:00) and sync to plan.
+        keys(a, "g", "2", "\n", "T")
+        self.assertEqual(a.elapsed(), 240)
+        self.assertFalse(a.running)                       # was paused: stays paused
+        self.assertEqual(a.status()["delta"][:2], ("ok", "±0"))
+        self.assertIn("4:00", a.current_flash()[0])
+        # Mid-step, while running: '=' does the same and keeps the clock running.
+        keys(a, "g", "1", "\n", "n", "n", "n", "s")    # step 1 (2:00-4:00, 7 beats), beat 4
+        keys(a, "=")
+        self.assertAlmostEqual(a.elapsed(), 120 + 120 * 3 / 7)
+        self.assertTrue(a.running)
+        self.clock.t += 5
+        self.assertAlmostEqual(a.elapsed(), 120 + 120 * 3 / 7 + 5)
+        self.assertEqual(a.status()["delta"][0], "ok")
+
+    def test_clock_to_plan_off_flow(self):
+        a = App(parser.load(helpers.FIXTURE), helpers.FIXTURE, now=self.clock, copier=self.copier, all_parts=True)
+        a.goto(0, 0)                                      # the title part: not in the flow
+        keys(a, "T")
+        self.assertEqual(a.elapsed(), 0)
+        self.assertEqual(a.current_flash()[1], "warn")
+
     def test_toggles_help_and_quit(self):
         a = self.app
         keys(a, "f")

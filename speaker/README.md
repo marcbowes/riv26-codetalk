@@ -17,6 +17,7 @@ speaker/speaker --check            # list markup speaker had to guess about (exi
 speaker/speaker --json             # the parsed talk as JSON
 speaker/speaker --goto 7           # start at step 7 (a number, a time like 21:30, or title words)
 speaker/speaker --clock 21:30      # start with the clock at 21:30, paused (handy after a restart)
+speaker/speaker --goto 3 --clock plan   # start at step 3 with the clock on plan (10:30), paused
 speaker/speaker --all              # let n/N walk the non-talk parts too
 speaker/speaker --no-color         # or set NO_COLOR=1
 ```
@@ -33,6 +34,7 @@ speaker/speaker --no-color         # or set NO_COLOR=1
 | `C` | copy the next single statement of the command, cycling (for `\gset` lines, which must be pasted one at a time) |
 | `s` | start or pause the talk clock |
 | `t` | reset the clock to 0:00 |
+| `T` or `=` | set the clock to the plan for this beat, so you're exactly on time. For after a restart: `g` to your step, then `T`. Keeps running if it was running |
 | `r` | reload TALK.md, keeping your place (the footer tells you when the file changed on disk) |
 | `f` | show or hide reader-only follow-along notes |
 | `j` / `k`, `↓` / `↑` (`J` / `K` half a page) | scroll, if a beat is taller than the screen |

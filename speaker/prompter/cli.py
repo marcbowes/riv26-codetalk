@@ -112,7 +112,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--all", action="store_true",
                     help="include non-talk parts (takeaways, cleanup, ...) in n/N navigation")
     ap.add_argument("--no-color", action="store_true", help="don't use colors (also: NO_COLOR=1)")
-    ap.add_argument("--clock", metavar="MM:SS", help="start with the talk clock at this time (paused)")
+    ap.add_argument("--clock", metavar="MM:SS|plan",
+                    help="start with the talk clock at this time (paused); 'plan' = the planned "
+                         "time of the starting beat, e.g. --goto 3 --clock plan")
     args = ap.parse_args(argv)
 
     path = find_talk(args.talk)

@@ -95,6 +95,20 @@ class App:
         self.clock_t0 = None
         self.say("Clock reset to 0:00 (s starts it)", "warn")
 
+    def clock_to_plan(self) -> None:
+        """T / =: put the clock where the plan says you should be at the start
+        of this beat, e.g. after restarting speaker and jumping back to your
+        step. Keeps running if it was running; stays paused if it was paused."""
+        planned = self.planned()
+        if planned is None:
+            self.say("No plan here: this part isn't in the talk flow", "warn")
+            return
+        was_running = self.running
+        self.clock_acc = max(0.0, float(planned))
+        self.clock_t0 = self.now() if was_running else None
+        self.say("Clock set to plan: %s%s" % (timing.fmt(self.clock_acc),
+                                              "" if was_running else " (paused; s starts it)"))
+
     def set_clock(self, seconds: float) -> None:
         self.clock_acc = max(0.0, seconds)
         self.clock_t0 = None
@@ -379,6 +393,8 @@ class App:
             self.toggle_clock()
         elif k == "t":
             self.reset_clock()
+        elif k in ("T", "="):
+            self.clock_to_plan()
         elif k == "r":
             self.reload()
         elif k == "f":
@@ -812,9 +828,12 @@ def run(path: str, talk: Talk, args) -> int:
     if getattr(args, "goto", None):
         _goto_arg(app, args.goto)
     if getattr(args, "clock", None):
-        t = timing.parse_time(args.clock)
-        if t is not None:
-            app.set_clock(t)
+        if args.clock.strip().lower() == "plan":
+            app.clock_to_plan()
+        else:
+            t = timing.parse_time(args.clock)
+            if t is not None:
+                app.set_clock(t)
 
     def _term(signum, frame):
         raise SystemExit(0)
