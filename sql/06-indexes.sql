@@ -4,19 +4,21 @@
 
 -- No index for "comments for a post": comments' primary key starts with
 -- post_id, so that's already a primary-key range scan (step 5's EXPLAIN:
--- ~0.4 ms, ~0.01 DPU). With a uuid primary key it was a full scan (~1,030 ms,
--- ~191 DPU), and needed a (post_id, created_at) index to get to ~1.7 ms.
+-- ~0.5 ms, ~0.02 DPU). Keyed by comment id alone it was a full scan
+-- (~1,030 ms, ~191 DPU), and needed a (post_id, created_at) index to get to
+-- ~1.7 ms.
 
 -- Recent posts: the obvious index...
 CREATE INDEX ASYNC posts_created_at_idx ON posts (created_at);
 -- ...and the planner ignores it for
 --   SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
--- Still a full primary-key scan + top-N sort (~211 ms, ~118 DPU). Why: in DSQL
+-- Still a full primary-key scan + top-N sort (~208 ms, ~121 DPU). Why: in DSQL
 -- the table *is* its primary-key B-tree (\d+ posts: "PRIMARY KEY ... INCLUDE
 -- (every column)", "Access method: btree_table"), so a secondary-index hit
 -- needs a second lookup to fetch title. Make the index cover the query:
 CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
---   after:  Index Only Scan Backward, ~0.9 ms, ~0.04 DPU (no sort, no lookups)
+--   after:  Index Only Scan Backward, ~0.7 ms, ~0.05 DPU (no sort, no lookups)
+-- (Each build on 100k posts: ~25 s.)
 DROP INDEX posts_created_at_idx;
 
 -- Watch the jobs (DSQL also runs its own ANALYZE jobs, hence the filter)

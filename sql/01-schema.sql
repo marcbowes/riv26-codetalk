@@ -6,14 +6,14 @@
 -- at 3,000 modified rows.
 --
 -- Key choices (the step-1 discussion):
---   posts.id     sequential: an identity column with CACHE 1. Posts are written
---                rarely, so a round trip to the shared counter per post (~7 ms)
---                is fine, and ids stay dense and in order.
+--   UUIDs everywhere: no shared counter to coordinate on (see the sequences
+--   aside in 00-by-hand.sql).
 --   comments     PRIMARY KEY (post_id, comment_id). The table is stored by its
 --                primary key, so a post's comments sit together: "comments for
 --                a post" is one range scan of the primary key, no secondary
---                index. comment_id is a random UUID: no counter to share. The
---                cost is a per-post hotspot, which a blog never needs to scale.
+--                index. comment_id is random, so comments across all posts
+--                still spread out. The cost is a per-post hotspot, which a blog
+--                never needs to scale.
 
 CREATE TABLE users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -23,7 +23,7 @@ CREATE TABLE users (
 );
 
 CREATE TABLE posts (
-  id bigint GENERATED ALWAYS AS IDENTITY (CACHE 1) PRIMARY KEY,
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   author_id uuid NOT NULL,
   slug text NOT NULL UNIQUE,
   title text NOT NULL,
@@ -33,7 +33,7 @@ CREATE TABLE posts (
 );
 
 CREATE TABLE comments (
-  post_id bigint NOT NULL,
+  post_id uuid NOT NULL,
   comment_id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
   body text NOT NULL,

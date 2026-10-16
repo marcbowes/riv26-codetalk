@@ -135,7 +135,7 @@ sentence. We'll call it cluster A.
 It has the DSQL skill installed, which is the only DSQL-specific setup in this
 whole talk:
 
-```
+```prompt
 Create a new Aurora DSQL cluster in us-west-2 and tell me its endpoint.
 ```
 
@@ -160,15 +160,20 @@ nothing in a config file.
 > roles with `AWS IAM GRANT`. The DSQL connectors for node-postgres, Postgres.js,
 > JDBC, Python, Go, Rust, .NET, Ruby and PHP do this for you.
 
-**A small schema, typed by hand.** Posts first, with an ordinary integer
-primary key, the way you'd write it anywhere:
+**A small schema, typed by hand.** Posts first, with a UUID primary key:
 
 ```sql
 CREATE TABLE posts (
-  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   title text NOT NULL,
   created_at timestamptz DEFAULT now()
 );
+```
+
+Why not an ordinary integer ID? Let's try one on a throwaway table:
+
+```sql
+CREATE TABLE ids (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, note text);
 ```
 ```
 ERROR:  identity column is not supported without an explicit cache size.
@@ -182,28 +187,27 @@ have to say how they share it:
 - **`CACHE 1`**: every ID comes from the shared counter. Dense and in order,
   but each one is a round trip. In rehearsal, a single 3,000-row `INSERT` that
   generated its IDs this way took **20.6 seconds**, about 7 ms per row.
-- **`CACHE 65536`**: each connection reserves a block of IDs and hands them
-  out locally. The same 3,000 rows took **117 ms**. But IDs have gaps, and
-  they don't follow commit order.
-
-(That's also why `serial` doesn't exist here.) Posts are written rarely: a few
-an hour, not a few thousand a second. An extra few milliseconds per post buys
-dense IDs in order, so posts get `CACHE 1`:
+- **`CACHE 65536`**: blocks of IDs are reserved and handed out without going
+  back to the counter. The same 3,000 rows took **117 ms**. But expect gaps and
+  jumps (in rehearsal, one session's next ID was 65,537), and IDs don't follow
+  commit order.
 
 ```sql
-CREATE TABLE posts (
-  id bigint GENERATED ALWAYS AS IDENTITY (CACHE 1) PRIMARY KEY,
-  title text NOT NULL,
-  created_at timestamptz DEFAULT now()
-);
+CREATE TABLE ids (id bigint GENERATED ALWAYS AS IDENTITY (CACHE 65536) PRIMARY KEY, note text);
+DROP TABLE ids;
 ```
 
-Comments are the opposite: the high-write table. Their IDs are random UUIDs,
-which need no counter at all. And the primary key starts with the *post*:
+(That's also why `serial` doesn't exist here.) Sequences are fine when you want
+them. A table written a few times an hour that wants dense, ordered IDs can
+afford `CACHE 1`. But a UUID needs no counter at all, so that's what we'll use
+everywhere.
+
+Comments are the high-write table. Their IDs are UUIDs too, but the primary
+key starts with the *post*:
 
 ```sql
 CREATE TABLE comments (
-  post_id bigint NOT NULL,
+  post_id uuid NOT NULL,
   comment_id uuid NOT NULL DEFAULT gen_random_uuid(),
   body text NOT NULL,
   created_at timestamptz DEFAULT now(),
@@ -228,7 +232,8 @@ scale without limit; comments across *all* posts do, and they still spread out.
 
 > **★ DSQL difference: sequences make you choose.** Identity columns and
 > sequences work, but you pick the trade-off explicitly: `CACHE 1` for dense
-> and ordered, a big cache for throughput. UUIDs avoid the question.
+> and ordered (a round trip per ID), a big cache for throughput. UUIDs avoid
+> the question.
 
 > **★ DSQL difference: the primary key is your physical layout.** Choose it
 > for how you read. Random where you need writes to spread, grouped where you
@@ -238,27 +243,20 @@ scale without limit; comments across *all* posts do, and they still spread out.
 <summary>Presenter notes</summary>
 
 - Typed, not pasted: [`sql/00-by-hand.sql`](sql/00-by-hand.sql) is the cheat sheet.
-- Open psql in pane B now too (same exports). Step 2 uses it, and so does step 7.
+- Open psql in pane B now too (same exports), ready for step 7.
 - Note whether the console defaulted deletion protection on (it matters in step 10).
 </details>
 
 ### Step 2 · Some rows · 9:00–10:30
 
 ```sql
-INSERT INTO posts (title) VALUES ('Hello, DSQL') RETURNING id;      -- 1
-INSERT INTO posts (title) VALUES ('Second post') RETURNING id;      -- 2
-INSERT INTO comments (post_id, body) VALUES (1, 'First!');
+INSERT INTO posts (title) VALUES ('Hello, DSQL'), ('Second post') RETURNING id;
+INSERT INTO comments (post_id, body) SELECT id, 'First!' FROM posts WHERE title = 'Hello, DSQL';
 ```
 
-Now from a **second psql session** (pane B):
-
-```sql
-INSERT INTO posts (title) VALUES ('From pane B') RETURNING id;      -- 3
-```
-
-Still dense: with `CACHE 1`, pane B's insert went to the same shared counter.
-With `CACHE 65536`, pane B's connection would have reserved its own block, and
-this post would have been number 65,537.
+Nothing to learn here, and that's the point: it's an `INSERT`. The IDs come
+back as UUIDs, generated on whichever part of the fleet handled the insert,
+with nothing shared to coordinate on.
 
 ### Step 3 · Queries · 10:30–12:00
 
@@ -283,9 +281,9 @@ DROP TABLE comments, posts;
 ```
 
 [`sql/01-schema.sql`](sql/01-schema.sql) is plain PostgreSQL DDL with the same
-key design. Posts get a `CACHE 1` identity, users get UUIDs, and comments are
-keyed by `(post_id, comment_id)`. It adds a `UNIQUE` username and slug, and
-`metadata jsonb` for each post's category, tags and reading time.
+choices: UUIDs everywhere, and comments keyed by `(post_id, comment_id)`. It
+adds users, a `UNIQUE` username and slug, and `metadata jsonb` for each post's
+category, tags and reading time.
 
 ### Steps 4 and 5 · An API by AI, a million rows, and a bad plan · 12:00–17:00
 
@@ -294,7 +292,7 @@ and come back.
 
 **Step 4: ask the agent for an API** (background):
 
-```
+```prompt
 In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM.
 The cluster endpoint is <cluster-A-endpoint>; connect as admin. The tables already
 exist: read the schema from the database.
@@ -350,23 +348,23 @@ EXPLAIN ANALYZE VERBOSE
 SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
 ```
 ```
- Limit  (... actual time=211.345..211.349 rows=20 loops=1)
+ Limit  (... actual time=208.010..208.015 rows=20 loops=1)
    ->  Sort  (... rows=100001 ...)
          Sort Key: posts.created_at DESC
-         Sort Method: top-N heapsort  Memory: 29kB
-         ->  Index Only Scan using posts_pkey on public.posts  (... actual time=0.726..191.252 rows=100002 loops=1)
- Execution Time: 211.399 ms
+         Sort Method: top-N heapsort  Memory: 28kB
+         ->  Index Only Scan using posts_pkey on public.posts  (... actual time=0.707..192.167 rows=100001 loops=1)
+ Execution Time: 208.074 ms
  Statement DPU Estimate:
-   Compute: 0.21413 DPU
-   Read: 117.64496 DPU
+   Compute: 0.22043 DPU
+   Read: 120.54339 DPU
    Write: 0.00000 DPU
-   Total: 117.85908 DPU
+   Total: 120.76381 DPU
 ```
 
 It read all 100,000 posts and sorted them to return 20. That's an ordinary
 PostgreSQL plan, but look at the bottom: **Statement DPU Estimate**. A DPU is
 what DSQL bills you for, so this plan tells you what the query *costs*, not
-just how long it takes. This one costs about 118 DPU every time someone loads
+just how long it takes. This one costs about 121 DPU every time someone loads
 the home page. We'll fix it in step 6.
 
 > **★ DSQL difference: the plan shows the price.** `EXPLAIN ANALYZE VERBOSE`
@@ -382,19 +380,19 @@ EXPLAIN ANALYZE VERBOSE
 SELECT body, created_at FROM comments WHERE post_id = :'post_id' ORDER BY created_at;
 ```
 ```
- Sort  (... actual time=0.380..0.382 rows=9 loops=1)
+ Sort  (... actual time=0.473..0.474 rows=14 loops=1)
    Sort Key: comments.created_at
-   ->  Index Only Scan using comments_pkey on public.comments  (... actual time=0.306..0.335 rows=9 loops=1)
-         Index Cond: (comments.post_id = '1001'::bigint)
- Execution Time: 0.432 ms
-   Total: 0.01448 DPU
+   ->  Index Only Scan using comments_pkey on public.comments  (... actual time=0.374..0.415 rows=14 loops=1)
+         Index Cond: (comments.post_id = '00010fdc-b992-0173-c302-f62c7ee40d70'::uuid)
+ Execution Time: 0.532 ms
+   Total: 0.02316 DPU
 ```
 
-**0.4 ms and 0.01 DPU, with no index added.** That's the primary key from
+**0.5 ms and 0.02 DPU, with no index added.** That's the primary key from
 step 1 paying off: the comments for this post are one contiguous range of
-`comments_pkey`. For comparison, in rehearsal with a plain UUID primary key,
-this same query was a full scan of all million comments: **1,031 ms and
-191 DPU**.
+`comments_pkey`. For comparison, in rehearsal with comments keyed by
+`comment_id` alone, this same query was a full scan of all million comments:
+**1,031 ms and 191 DPU**.
 
 <details>
 <summary>Presenter notes</summary>
@@ -425,7 +423,7 @@ table that keeps taking writes:
 
 ```sql
 SELECT job_id, status, object_name FROM sys.jobs WHERE job_type = 'INDEX_BUILD';
-CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');      -- seconds on 100k rows; ~45 s for 1M
+CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');      -- about 25 s on 100k posts
 ```
 
 > **★ DSQL difference: schema changes are jobs.** `CREATE INDEX ASYNC`
@@ -434,7 +432,7 @@ CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');      -- seconds on 100k row
 > with no lock and no maintenance window.
 
 Run the home page `EXPLAIN` again (↑ in psql), and it's **exactly the same
-plan**: a full scan plus a sort, about 211 ms. The planner ignored our index.
+plan**: a full scan plus a sort, about 208 ms. The planner ignored our index.
 
 Here's why. Look at how DSQL stores a table:
 
@@ -459,13 +457,13 @@ So give the index what the query needs:
 CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
 ```
 ```
- Limit  (... actual time=0.808..0.850 rows=20 loops=1)
+ Limit  (... actual time=0.654..0.691 rows=20 loops=1)
    ->  Index Only Scan Backward using posts_recent_idx on public.posts
- Execution Time: 0.894 ms
-   Total: 0.04336 DPU
+ Execution Time: 0.736 ms
+   Total: 0.04708 DPU
 ```
 
-**211 ms to 0.9 ms**, and **118 DPU to 0.04**. It's an index-only scan, read backwards for the `DESC`,
+**208 ms to 0.7 ms**, and **121 DPU to 0.05**. It's an index-only scan, read backwards for the `DESC`,
 so there's no sort and no lookups.
 
 > **★ DSQL difference: covering indexes matter.** Every table is stored by
@@ -530,7 +528,7 @@ and it found our orphans. Clean them up and validate again:
 ```sql
 DELETE FROM comments WHERE post_id = :'post_id';
 ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;
-CALL sys.wait_for_job('<job_id>');                                 -- succeeded = t (about 16 s on 1M rows)
+CALL sys.wait_for_job('<job_id>');                                 -- succeeded = t (about 10 s on 1M rows)
 ```
 
 Now the same race again. Put the post back, reconnect pane B (`\c`), and
@@ -584,7 +582,7 @@ curl -s 'localhost:3000/posts?limit=3' | jq .
 
 Then one more background task:
 
-```
+```prompt
 Build a single-page web UI for the blog API running on localhost:3000: a home
 page of recent posts, a post page with its comments, and a form to add a
 comment. Serve it from the same server and give me the URL.
@@ -857,11 +855,11 @@ What we did in 45 minutes, and what DSQL did differently:
 |---|---|
 | Created a cluster | Seconds; nothing to size, patch or fail over |
 | Connected with psql | IAM tokens, no passwords |
-| Wrote a schema | Sequences need a cache (`CACHE 1` for low-rate tables); UUIDs need nothing |
+| Wrote a schema | Sequences need a cache, a round trip per ID with `CACHE 1`; UUIDs need nothing |
 | Chose primary keys | The key is the physical layout: random to spread writes, grouped to read together |
 | Loaded 1.1M rows | 3,000 rows per transaction; batch and parallelize |
 | Read a query plan | The plan shows the DPU cost |
-| Loaded a post's comments | A primary-key range scan: 0.4 ms, no index |
+| Loaded a post's comments | A primary-key range scan: 0.5 ms, no index |
 | Added an index | Built as a background job; covering indexes matter |
 | Raced two transactions | Optimistic: conflicts at `COMMIT`; retry the transaction |
 | Added a foreign key | Validated as a job; enforced without locks |

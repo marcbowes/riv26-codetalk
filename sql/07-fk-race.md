@@ -55,7 +55,7 @@ already there.
 DELETE FROM comments WHERE post_id = :'post_id';
 
 ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;
-CALL sys.wait_for_job('<job_id>');                                -- succeeded = t (~16 s on 1M comments)
+CALL sys.wait_for_job('<job_id>');                                -- succeeded = t (~10 s on 1M comments)
 ```
 
 ## 4. Re-run the race: B fails at commit

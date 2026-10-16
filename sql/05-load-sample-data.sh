@@ -13,19 +13,14 @@
 # (3,000) rows and well under 10 MiB. Ids are deterministic, so rows can
 # reference each other without lookups, and with ON CONFLICT DO NOTHING the
 # script is safe to re-run:
-#   users     md5 of a counter, as a uuid
-#   posts     POST_ID_BASE + n, set explicitly (OVERRIDING SYSTEM VALUE). Letting
-#             the CACHE 1 identity generate them would cost a round trip to the
-#             shared counter per row (~20 s per 3,000). The sequence is moved
-#             past them at the end with setval.
-#   comments  (post_id, comment_id): the post comes from hashint8 of the
-#             counter (1 to ~26 comments per post), comment_id is an md5 uuid
+#   users, posts  md5 of a counter, as a uuid
+#   comments      (post_id, comment_id): the post comes from hashint8 of the
+#                 counter (1 to ~26 comments per post), comment_id is an md5 uuid
 #
 # Needs the real schema (sql/01-schema.sql). No foreign keys yet (step 7).
 #
 # Environment: PGHOST (required), AWS_REGION (default: from PGHOST),
 #   USERS=1000 POSTS=100000 COMMENTS=1000000 BATCH=3000 PARALLEL=8
-#   POST_ID_BASE=1000 (loaded posts get ids above it; hand-made ones stay below)
 set -euo pipefail
 
 : "${PGHOST:?set PGHOST to the cluster endpoint, e.g. abc123.dsql.us-west-2.on.aws}"
@@ -35,7 +30,6 @@ POSTS="${POSTS:-100000}"
 COMMENTS="${COMMENTS:-1000000}"
 BATCH="${BATCH:-3000}"
 PARALLEL="${PARALLEL:-8}"
-POST_ID_BASE="${POST_ID_BASE:-1000}"
 ((BATCH <= 3000)) || { echo "BATCH must be <= 3000 (DSQL's per-transaction row limit)" >&2; exit 1; }
 
 export PGHOST PGUSER="${PGUSER:-admin}" PGDATABASE="${PGDATABASE:-postgres}" PGSSLMODE=require
@@ -76,8 +70,7 @@ SQL
 posts_sql() { # lo hi
   cat <<SQL
 INSERT INTO posts (id, author_id, slug, title, body, metadata, created_at)
-OVERRIDING SYSTEM VALUE
-SELECT $POST_ID_BASE + g,
+SELECT md5('post:' || g)::uuid,
        md5('user:' || (1 + floor(random() * $USERS)::int))::uuid,
        'post-' || g,
        t.title,
@@ -103,7 +96,7 @@ SQL
 comments_sql() { # lo hi
   cat <<SQL
 INSERT INTO comments (post_id, comment_id, user_id, body, created_at)
-SELECT $POST_ID_BASE + c.n,
+SELECT md5('post:' || c.n)::uuid,
        md5('comment:' || g)::uuid,
        md5('user:' || (1 + floor(random() * $USERS)::int))::uuid,
        ($REPLIES)[1 + floor(random() * 10)::int],
@@ -175,8 +168,6 @@ total_started=$SECONDS
 load users "$USERS" users_sql
 load posts "$POSTS" posts_sql
 load comments "$COMMENTS" comments_sql
-# Point the posts identity past the loaded ids, so new posts don't collide.
-psql -X -q -c "SELECT setval(pg_get_serial_sequence('posts', 'id'), (SELECT max(id) FROM posts))" >/dev/null
 psql -X -q -c "ANALYZE users" -c "ANALYZE posts" -c "ANALYZE comments"
 echo "Done in $((SECONDS - total_started))s"
 psql -X -c "SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM posts) AS posts, (SELECT count(*) FROM comments) AS comments"
