@@ -170,7 +170,7 @@ export function generatePosts(authorIds: readonly string[], count: number, seed:
 }
 
 export interface SeedComment {
-  id: string;
+  commentId: string;
   postId: string;
   userId: string;
   body: string;
@@ -197,7 +197,7 @@ export function generateComments(
     for (let i = 0; i < n; i++) {
       const parts = sample(r, COMMENTS, r() < 0.3 ? 2 : 1).map((c) => fill(c, pick(r, allTopics), pick(r, allTopics)));
       out.push({
-        id: uuid(r),
+        commentId: uuid(r),
         postId: post.id,
         userId: pick(r, userIds),
         body: parts.join(" "),

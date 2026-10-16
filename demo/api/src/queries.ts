@@ -8,7 +8,6 @@ import { comments, postCategory, posts, users } from "./schema.js";
 import { pgTimestampToIso } from "./time.js";
 import type { CommentView, Person, PostDetail, PostMeta, PostSummary } from "./types.js";
 import {
-  EXCERPT_SOURCE_CHARS,
   HttpError,
   type NewComment,
   type NewPost,
@@ -77,8 +76,8 @@ export function listPostsQuery(db: Db, opts: ListPostsOptions) {
       id: posts.id,
       slug: posts.slug,
       title: posts.title,
-      // Only pull the head of the body: posts are big and the list only needs an excerpt.
-      bodyHead: sql<string>`left(${posts.body}, ${sql.raw(String(EXCERPT_SOURCE_CHARS))})`,
+      // No body: the excerpt is metadata.seo.description, so posts_recent_idx and
+      // posts_category_idx cover this query (see demo/db/ddl.ts).
       metadata: posts.metadata,
       createdAt: posts.createdAt,
       author: person,
@@ -98,7 +97,7 @@ export async function listPosts(db: Db, opts: ListPostsOptions): Promise<PostSum
       id: r.id,
       slug: r.slug,
       title: r.title,
-      excerpt: excerpt(r.bodyHead),
+      excerpt: m.seo.description,
       category: m.category,
       tags: m.tags,
       readingMinutes: m.readingMinutes,
@@ -156,7 +155,7 @@ export const COMMENTS_LIMIT = 200;
 /** The newest COMMENTS_LIMIT comments, returned oldest first, so new comments always show up. */
 export async function listComments(db: Db, postId: string): Promise<CommentView[]> {
   const rows = await db
-    .select({ id: comments.id, body: comments.body, createdAt: comments.createdAt, user: person })
+    .select({ id: comments.commentId, body: comments.body, createdAt: comments.createdAt, user: person })
     .from(comments)
     .innerJoin(users, eq(users.id, comments.userId))
     .where(eq(comments.postId, postId))
@@ -216,7 +215,7 @@ export async function addComment(
       const [row] = await tx
         .insert(comments)
         .values({ postId, userId: user.id, body: input.body })
-        .returning({ id: comments.id, body: comments.body, createdAt: comments.createdAt });
+        .returning({ id: comments.commentId, body: comments.body, createdAt: comments.createdAt });
       if (!row) throw new Error("insert returned no row");
       return { id: row.id, postId, body: row.body, createdAt: iso(row.createdAt), user };
     },

@@ -26,7 +26,7 @@ describe("seed generation", () => {
   it("unique usernames, slugs and ids", () => {
     assert.equal(new Set(users.map((u) => u.username)).size, users.length);
     assert.equal(new Set(posts.map((p) => p.slug)).size, posts.length);
-    const all = [...users, ...posts, ...comments].map((x) => x.id);
+    const all = [...users.map((u) => u.id), ...posts.map((p) => p.id), ...comments.map((c) => c.commentId)];
     assert.equal(new Set(all).size, all.length);
   });
 
@@ -38,7 +38,7 @@ describe("seed generation", () => {
       assert.ok(p.body.length > 1_000 && p.body.length < 20_000, String(p.body.length));
       assert.ok(p.metadata.tags.length >= 2 && p.metadata.tags.length <= 4);
       assert.ok(p.metadata.readingMinutes >= 1);
-      assert.ok(p.metadata.seo.description.length > 0 && p.metadata.seo.description.length <= 156);
+      assert.ok(p.metadata.seo.description.length > 0 && p.metadata.seo.description.length <= 221);
       assert.ok(Date.parse(p.createdAt) < NOW.getTime());
       assert.ok(ids.includes(p.authorId));
     }

@@ -54,6 +54,33 @@ async function tableExists(q: Q, name: string): Promise<boolean> {
   return (r.rowCount ?? 0) > 0;
 }
 
+/** --reset: drop the blog tables (children first). */
+export async function resetTables(q: Q): Promise<void> {
+  step("reset (--reset)");
+  for (const name of [...APP_TABLES].reverse()) {
+    await q(`DROP TABLE IF EXISTS ${name}`);
+    log(`  ${name}: dropped`);
+  }
+}
+
+/**
+ * Tables from before a schema change don't get altered (CREATE TABLE IF NOT
+ * EXISTS skips them), so catch the old shapes and say what to do.
+ */
+export async function checkTableShapes(q: Q): Promise<void> {
+  if (!(await tableExists(q, "comments"))) return;
+  const r = await q<{ n: number }>(
+    `SELECT count(*)::int AS n FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'comments' AND column_name = 'comment_id'`,
+  );
+  if ((r.rows[0]?.n ?? 0) === 0) {
+    throw new Error(
+      "comments has the old shape (keyed by id, not (post_id, comment_id)). " +
+        "Re-run with --reset (deploy.sh: SETUP_ARGS=--reset) to drop and reseed the blog tables.",
+    );
+  }
+}
+
 export async function ensureTables(q: Q): Promise<void> {
   step("tables");
   for (const t of TABLES) {

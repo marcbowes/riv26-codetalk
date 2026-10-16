@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  EXCERPT_CHARS,
   HttpError,
   buildPostMeta,
   excerpt,
@@ -135,7 +136,7 @@ describe("text helpers", () => {
     assert.equal(m.category, "serverless");
     assert.deepEqual(m.tags, ["lambda"]);
     assert.equal(m.readingMinutes, 5);
-    assert.ok(m.seo.description.length <= 156);
+    assert.ok(m.seo.description.length <= EXCERPT_CHARS + 1); // + the ellipsis
   });
 });
 

@@ -755,7 +755,9 @@ The same blog, finished ([`demo/`](demo)):
 - a React page on S3 and CloudFront;
 - a Lambda function in each Region, running the same Hono + Drizzle code we
   ran locally;
-- one multi-Region DSQL cluster, peered between us-west-2 and us-east-1.
+- one multi-Region DSQL cluster, peered between us-west-2 and us-east-1, with
+  the same schema choices as the live build: UUID keys, comments keyed by
+  `(post_id, comment_id)`, and covering indexes for the home and category pages.
 
 The page has one column per Region:
 - **Round trip:** browser to that Region and back. From Las Vegas, us-west-2
@@ -916,3 +918,6 @@ cd demo && ./destroy.sh
 - **The planner ignores your index**: check whether the query needs columns
   the index doesn't have (`INCLUDE` them), and whether it uses exactly the
   indexed expression (`->>` vs `->`).
+- **An `Index Scan` where you expected `Index Only Scan`**: if the query selects
+  the primary key, `INCLUDE` it in the index too. DSQL doesn't serve the key
+  from a secondary index in an index-only scan otherwise.

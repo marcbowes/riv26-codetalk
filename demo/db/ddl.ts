@@ -43,12 +43,16 @@ export const TABLES: TableDdl[] = [
   },
   {
     name: "comments",
+    // Keyed by post first: the table is stored by its primary key, so a post's
+    // comments sit together and "comments for a post" is a primary-key range
+    // scan, with no secondary index (the talk's step 1 and step 5).
     sql: `CREATE TABLE IF NOT EXISTS comments (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   post_id uuid NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  comment_id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES users(id),
   body text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (post_id, comment_id)
 )`,
   },
 ];
@@ -60,11 +64,19 @@ export interface IndexDdl {
   on: string;
 }
 
+// Both list indexes are covering: they INCLUDE every column the list query
+// reads (the excerpt comes from metadata, not body). In DSQL the table is its
+// primary-key B-tree, so an index that doesn't cover the query costs a lookup
+// per row, and the planner would rather scan the table (the talk's step 6).
+// `id` is listed explicitly: selecting the primary key from a secondary index
+// isn't index-only in DSQL unless it's INCLUDEd (measured: Index Scan 20 ms ->
+// Index Only Scan 8 ms for the home page).
+const LIST_COLUMNS = "INCLUDE (id, author_id, slug, title, metadata)";
+
 export const INDEXES: IndexDdl[] = [
-  { name: "posts_created_at_idx", table: "posts", on: "(created_at)" },
+  { name: "posts_recent_idx", table: "posts", on: `(created_at) ${LIST_COLUMNS}` },
   // Same expression the API filters on: posts.metadata->>'category'.
-  { name: "posts_category_idx", table: "posts", on: "((metadata->>'category'), created_at)" },
-  { name: "comments_post_idx", table: "comments", on: "(post_id, created_at)" },
+  { name: "posts_category_idx", table: "posts", on: `((metadata->>'category'), created_at) ${LIST_COLUMNS}` },
 ];
 
 export const createIndexSql = (ix: IndexDdl, ifNotExists = true) =>

@@ -163,8 +163,6 @@ export function truncate(text: string, max: number): string {
 }
 
 export const EXCERPT_CHARS = 220;
-/** How much of the body the list query pulls back to build an excerpt. */
-export const EXCERPT_SOURCE_CHARS = 400;
 
 export function excerpt(body: string): string {
   return truncate(body, EXCERPT_CHARS);
@@ -197,6 +195,7 @@ export function buildPostMeta(body: string, category: string, tags: string[]): P
     category,
     tags,
     readingMinutes: readingMinutes(body),
-    seo: { description: truncate(body, 155) },
+    // Also the list excerpt (the list query doesn't read body).
+    seo: { description: truncate(body, EXCERPT_CHARS) },
   };
 }

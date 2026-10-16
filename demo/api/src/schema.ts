@@ -1,7 +1,8 @@
-// Drizzle table definitions. These mirror the DDL in demo/db/setup.ts (and the
-// spec): all DDL is applied by hand / by setup.ts, never by drizzle-kit.
+// Drizzle table definitions. These mirror the DDL in demo/db/ddl.ts: all DDL
+// is applied by setup.ts, never by drizzle-kit. Indexes live only in ddl.ts
+// (they're covering, with INCLUDE, which Drizzle's index builder can't express).
 import { sql } from "drizzle-orm";
-import { type AnyPgColumn, index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 import type { PostMeta } from "./types.js";
 
@@ -17,39 +18,33 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
 });
 
-export const posts = pgTable(
-  "posts",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    authorId: uuid("author_id")
-      .notNull()
-      .references(() => users.id),
-    slug: text("slug").notNull().unique(),
-    title: text("title").notNull(),
-    body: text("body").notNull(),
-    metadata: jsonb("metadata").$type<PostMeta>().notNull().default(sql`'{}'::jsonb`),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
-  },
-  (t) => [
-    index("posts_created_at_idx").on(t.createdAt),
-    index("posts_category_idx").on(postCategory(t.metadata), t.createdAt),
-  ],
-);
+export const posts = pgTable("posts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  authorId: uuid("author_id")
+    .notNull()
+    .references(() => users.id),
+  slug: text("slug").notNull().unique(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  metadata: jsonb("metadata").$type<PostMeta>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
 
+// Keyed (post_id, comment_id): a post's comments are one primary-key range.
 export const comments = pgTable(
   "comments",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
     postId: uuid("post_id")
       .notNull()
       .references(() => posts.id, { onDelete: "cascade" }),
+    commentId: uuid("comment_id").notNull().defaultRandom(),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),
     body: text("body").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   },
-  (t) => [index("comments_post_idx").on(t.postId, t.createdAt)],
+  (t) => [primaryKey({ columns: [t.postId, t.commentId] })],
 );
 
 /**

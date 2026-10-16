@@ -18,6 +18,8 @@ CREATE INDEX ASYNC posts_created_at_idx ON posts (created_at);
 -- needs a second lookup to fetch title. Make the index cover the query:
 CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
 --   after:  Index Only Scan Backward, ~0.7 ms, ~0.05 DPU (no sort, no lookups)
+-- If the query also selects the primary key (id), INCLUDE that too: DSQL doesn't
+-- serve the key from a secondary index in an index-only scan otherwise.
 -- (Each build on 100k posts: ~25 s.)
 DROP INDEX posts_created_at_idx;
 

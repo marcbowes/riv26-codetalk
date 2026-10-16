@@ -10,6 +10,7 @@
 import { parseArgs } from "node:util";
 import { AuroraDSQLPool } from "@aws/aurora-dsql-node-postgres-connector";
 import {
+  checkTableShapes,
   ensureIamGrants,
   ensureIndexes,
   ensureRole,
@@ -17,6 +18,7 @@ import {
   errCode,
   errMessage,
   querier,
+  resetTables,
   seedAll,
   summary,
   type SeedOptions,
@@ -30,6 +32,8 @@ const HELP = `Usage: tsx db/setup.ts --endpoint <host> [options]
   --app-role <name>       Database role for the app (default: blog_app)
   --regrant               AWS IAM REVOKE + GRANT even if a mapping exists
                           (use after recreating an IAM role with the same name)
+  --reset                 DROP the blog tables first (all their data), then
+                          recreate and reseed them: use after a schema change
   --skip-seed             Schema, roles and grants only
   --resume                Re-run the (deterministic) seed with ON CONFLICT DO
                           NOTHING, to finish an interrupted seed
@@ -46,6 +50,7 @@ interface Options extends SeedOptions {
   roleArns: string[];
   appRole: string;
   regrant: boolean;
+  reset: boolean;
   seed: boolean;
 }
 
@@ -57,6 +62,7 @@ function parseOptions(): Options {
       "role-arn": { type: "string", multiple: true },
       "app-role": { type: "string" },
       regrant: { type: "boolean" },
+      reset: { type: "boolean" },
       "skip-seed": { type: "boolean" },
       resume: { type: "boolean" },
       users: { type: "string" },
@@ -87,6 +93,7 @@ function parseOptions(): Options {
     roleArns: values["role-arn"] ?? [],
     appRole,
     regrant: values.regrant ?? false,
+    reset: values.reset ?? false,
     seed: !(values["skip-seed"] ?? false),
     resume: values.resume ?? false,
     users: num("users", values.users, 500, 1),
@@ -123,6 +130,8 @@ async function main(): Promise<void> {
       `SELECT current_user AS user, current_setting('server_version') AS version`,
     );
     log(`  connected as ${who.rows[0]?.user} (PostgreSQL ${who.rows[0]?.version})`);
+    if (o.reset) await resetTables(q);
+    await checkTableShapes(q);
     await ensureTables(q);
     await ensureIndexes(q);
     await ensureRole(q, o.appRole);

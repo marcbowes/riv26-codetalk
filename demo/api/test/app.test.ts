@@ -184,7 +184,8 @@ describe("query building", () => {
     assert.match(sql, /\("posts"\."metadata" ->> 'category'\) = \$1/);
     assert.match(sql, /"posts"\."created_at" < \$2/);
     assert.match(sql, /order by "posts"\."created_at" desc limit \$3/);
-    assert.match(sql, /left\("posts"\."body", 400\)/);
+    // The list never reads body, so the covering list indexes cover it.
+    assert.doesNotMatch(sql, /"posts"\."body"/);
     assert.deepEqual(params, ["databases", "2026-12-01T17:00:00.000Z", 20]);
   });
 
