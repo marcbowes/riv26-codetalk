@@ -6,7 +6,7 @@
 #
 # Started as the script Kiro wrote in the first dry run (same approach), then
 # tuned: one IAM token and one psql session per worker instead of per batch, a
-# single metadata.category (step 9 indexes metadata->>'category'), and comments
+# single metadata.category (step 8 indexes metadata->>'category'), and comments
 # dated after their post.
 #
 # DSQL limits shape it: each INSERT is its own transaction of at most BATCH

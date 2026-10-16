@@ -70,7 +70,7 @@ You need:
   parts also use us-east-1, with us-east-2 as the witness.
 - **AWS CLI v2** (with `aws dsql`), **psql** (16 or newer), **jq**, and this repo:
   `git clone https://github.com/marcbowes/riv26-codetalk && cd riv26-codetalk`
-- **Optional: an AI coding agent with the Aurora DSQL skill** (steps 1, 4, 8):
+- **Optional: an AI coding agent with the Aurora DSQL skill** (step 1; step 4 shows the prompt used to build the API):
   - Kiro: the [Aurora DSQL power](https://kiro.dev/launch/powers/add/?name=amazon-aurora-dsql).
   - Claude Code: `/plugin marketplace add awslabs/agent-plugins`, then
     `/plugin install databases-on-aws@agent-plugins-for-aws`.
@@ -245,7 +245,7 @@ scale without limit; comments across *all* posts do, and they still spread out.
 
 - Typed, not pasted: [`sql/00-by-hand.sql`](sql/00-by-hand.sql) is the cheat sheet.
 - Open psql in pane B now too (same exports), ready for step 7.
-- Note whether the console defaulted deletion protection on (it matters in step 10).
+- Note whether the console defaulted deletion protection on (it matters in step 9).
 </details>
 
 ### Step 2 · Some rows · 9:00–10:30
@@ -286,12 +286,10 @@ choices: UUIDs everywhere, and comments keyed by `(post_id, comment_id)`. It
 adds users, a `UNIQUE` username and slug, and `metadata jsonb` for each post's
 category, tags and reading time.
 
-### Steps 4 and 5 · An API by AI, a million rows, and a bad plan · 12:00–17:00
+### Step 4 · An API, from one prompt · 12:00–13:00
 
-These two run at the same time. The API takes a few minutes, so I'll start it
-and come back.
-
-**Step 4: ask the agent for an API** (background):
+With a schema in place, the application is the easy part. This is the prompt we
+gave Kiro in rehearsal, with the Aurora DSQL power installed:
 
 ```prompt
 In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM.
@@ -304,13 +302,20 @@ and each commenter's username), CreatePost, AddComment.
 Give me an HTTP server and a small CLI that calls it over HTTP. Start the server
 and use the CLI to check that every operation works.
 ```
+```text
+import { drizzle } from '@aws/aurora-dsql-drizzle';
+export const db = drizzle({ connection: { host, user: 'admin', region }, schema });
+...
+const c = await db.transactionWithRetry(async (tx) => { /* check the post, insert the comment */ });
+```
 
 There's nothing DSQL-specific in that prompt beyond the word "DSQL". The skill
-supplies the rest: what it should come back with is the
+supplies the rest. It came back with the
 [DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
-`@aws/aurora-dsql-drizzle`, with IAM auth through the connector and
-`db.transactionWithRetry(...)` around every write. I'll explain why that retry
-matters in step 7.
+`@aws/aurora-dsql-drizzle`, with IAM auth through the connector (no passwords),
+and `db.transactionWithRetry(...)` around every write. I'll explain why that
+retry matters in step 7. We won't wait for an agent on stage: you'll see a
+finished version of the app at 35:00.
 
 > No agent? [`demo/api`](demo/api) is a finished version of this API, written for
 > the same schema:
@@ -319,8 +324,19 @@ matters in step 7.
 > CLUSTER_ENDPOINT=$PGHOST DB_USER=admin npm run dev:api     # http://localhost:3000
 > ```
 
-**Step 5: a million rows.** A blog with three posts is easy to make fast, so
-let's load a real one. In a second terminal:
+<details>
+<summary>Presenter notes</summary>
+
+- Shown, not run. In the first dry run Kiro took about 11 minutes. Its first
+  version used plain `drizzle-orm` with the connector and needed a nudge toward
+  `@aws/aurora-dsql-drizzle`, and its CLI called the database directly (hence
+  "calls it over HTTP" in the prompt).
+</details>
+
+### Step 5 · A million rows, and a bad plan · 13:00–17:00
+
+A blog with three posts is easy to make fast, so let's load a real one. In a
+second terminal:
 
 ```sh
 PGHOST=$PGHOST ./sql/05-load-sample-data.sh
@@ -398,12 +414,7 @@ step 1 paying off: the comments for this post are one contiguous range of
 <details>
 <summary>Presenter notes</summary>
 
-- Start step 4 first, then step 5. The loader finishes long before the agent.
-- Step 4 must be finished before step 7 starts deleting rows.
 - `\gset` must be on its own line; pasting two lines at once breaks it.
-- First dry run: Kiro took about 11 minutes for the API. It needed a nudge
-  toward `@aws/aurora-dsql-drizzle`, and its CLI called the database directly
-  (hence "calls it over HTTP" in the prompt).
 </details>
 
 ### Step 6 · An index, without downtime · 17:00–20:00
@@ -583,26 +594,7 @@ were taken while either transaction ran, and you still can't create an orphan.
 - Full script with expected output: [`sql/07-fk-race.md`](sql/07-fk-race.md).
 </details>
 
-### Step 8 · The API works, now give it a page · 24:00–26:00
-
-By now the agent has finished the API. Over HTTP:
-
-```sh
-curl -s 'localhost:3000/posts?limit=3' | jq .
-```
-
-Then one more background task:
-
-```prompt
-Build a single-page web UI for the blog API running on localhost:3000: a home
-page of recent posts, a post page with its comments, and a form to add a
-comment. Serve it from the same server and give me the URL.
-```
-
-> No agent? [`demo/web`](demo/web) works against the local API:
-> `cd demo && VITE_API_URL=http://localhost:3000 npm run dev:web`
-
-### Step 9 · JSONB, and an index on an expression · 26:00–29:00
+### Step 8 · JSONB, and an index on an expression · 24:00–27:00
 
 Every post has front matter in a JSONB column:
 
@@ -664,7 +656,7 @@ index, or model it as rows.
 > compression, but `pg_attribute.attcompression` is `l` (lz4) on `title`,
 > `body` and `metadata`. Large text and JSON values are stored compressed.
 
-### Step 10 · Scale to zero, and an accident · 29:00–33:00
+### Step 9 · Scale to zero, and an accident · 27:00–32:00
 
 I want to show you change data capture, but first let's tidy up. In the
 console there are **two** clusters. Cluster B, the one the agent made, has
@@ -692,13 +684,13 @@ the delete, from the console, and carry on.)*
 - Deletion protection is on by default for API-created clusters. Either
   disable it on A before the talk, or use it: "this is what it's for".
 - Restore details are still to come: API, duration, endpoint changes.
-  If the endpoint changes, re-export `PGHOST`, restart the step-4 server,
+  If the endpoint changes, re-export `PGHOST`,
   and point CDC at the restored cluster.
 - CDC needs an `ACTIVE` cluster. Run a query against the restored one first.
 - **Following along:** don't delete your cluster unless you mean to.
 </details>
 
-### Step 11 · Change data capture · 33:00–34:00
+### Step 10 · Change data capture · 32:00–34:00
 
 Every committed change, streamed to Kinesis. First, start the viewer (it reads
 from the latest position, so it shows only new changes):
@@ -708,7 +700,16 @@ from the latest position, so it shows only new changes):
 ```
 
 Then, in the console: cluster A → create a CDC stream → target the Kinesis
-stream → create. Now add a comment from the step-8 page:
+stream → create. Now add a comment, from psql:
+
+```sql
+SELECT id AS post_id FROM posts WHERE slug LIKE 'post-%' LIMIT 1 \gset
+```
+```sql
+INSERT INTO comments (post_id, user_id, body) VALUES (:'post_id', :'user_id', 'Hello from the stage');
+```
+
+It shows up in the viewer straight away:
 
 ```
 commit       op     table    tx           cdc kinesis    here   total  row
@@ -753,7 +754,7 @@ aws dsql create-stream --cluster-identifier <cluster-A-id> \
 ```
 </details>
 
-### Step 12 · Multi-Region · 34:00–35:00
+### Step 11 · Multi-Region · 34:00–35:00
 
 Last console stop: **Create cluster → Multi-Region**. You choose the two Regions
 that take reads and writes, us-west-2 and us-east-1, and a **witness** Region,
@@ -916,11 +917,11 @@ Links:
 ## Cleaning up
 
 ```sh
-# Steps 1-12: your clusters (turn off deletion protection first if it's on)
+# Steps 1-11: your clusters (turn off deletion protection first if it's on)
 aws dsql update-cluster --identifier <id> --no-deletion-protection-enabled
 aws dsql delete-cluster --identifier <id>
 
-# Step 11: the CDC stream, then the Kinesis stream
+# Step 10: the CDC stream, then the Kinesis stream
 aws dsql delete-stream --cluster-identifier <cluster-A-id> --stream-identifier <stream-id>
 aws kinesis delete-stream --stream-name dat401-cdc
 

@@ -38,15 +38,14 @@ PostgreSQL. Then the agenda.
 | 1 | Create cluster A in the console. Ask the AI to create cluster B. Connect to A with psql and type a small schema by hand (`sql/00-by-hand.sql`): posts with a UUID key, then an aside on sequences (an identity column without a cache errors; `CACHE 1` is dense but a round trip per id, `CACHE 65536` fast but gappy). Comments: `PRIMARY KEY (post_id, comment_id)`, random vs grouped keys (spread writes vs read locality; a per-post hotspot is fine). | console, AI, psql | Cluster creation takes seconds. Cluster B exists for step 10. Clusters show up as random IDs, so mixing them up later is believable. |
 | 2 | Insert posts and a comment, by hand. | psql | Merge with 3 if short on time. |
 | 3 | Recent posts; comments for a post. Then drop the toy schema and `\i sql/01-schema.sql` (users, slugs, bodies, JSONB metadata) plus `02-first-rows.sql`. | psql | Very little pasting in this talk: type the small things, `\i` the real schema. |
-| 4 | **Background AI task:** Drizzle API (ListPosts, GetPost, ListComments, AddComment, ...) with a CLI and a server. The agent starts the server and checks it with the CLI. | AI | Longest task, so start it early. It must finish by step 8. |
+| 4 | Show the prompt that built the API in rehearsal (Kiro + DSQL power) and what it produced: `@aws/aurora-dsql-drizzle`, IAM auth via the connector, `transactionWithRetry` on writes. Not run live. | slide/psql | The first dry run's live build took ~11 min and wasn't worth the stage time. |
 | 5 | Load sample data with `sql/05-load-sample-data.sh` (1k users, 100k posts, 1M comments in ~15 s, generated server-side). `EXPLAIN ANALYZE VERBOSE`: home page = full scan + sort (~208 ms, ~121 DPU); comments for a post = PK range scan already (0.5 ms, 0.02 DPU; keyed by comment id alone it was 1 s / 191 DPU). | shell, psql | Pre-built, not live AI: in the first dry run the AI version took 8 minutes. |
 | 6 | Add the home-page index. `posts (created_at)` gets *ignored* by the planner (each hit needs a lookup into the table, which is its PK B-tree); `INCLUDE (title)` makes it covering: 208 ms → 0.7 ms. No comments index needed. | psql | `CREATE INDEX ASYNC` → job in `sys.jobs` → `wait_for_job` → EXPLAIN again. |
 | 7 | FK race: two psql sessions side by side. A deletes a post while B comments on it, and both commit, leaving an orphan. Add the FK `NOT VALID`; validation fails on the orphan. Clean up, validate (a job), and re-run the race. | psql ×2 | Good teaching moment: why both commit without the FK (no write-write conflict) and what the FK changes under OCC. |
-| 8 | Step 4 is done: show the API working via the CLI. **Background AI task:** an HTML page that uses the API, run locally. | AI | Start the HTML task here; show the page after step 9. |
-| 9 | Query posts by category from `metadata`, then add the expression index on `metadata->>'category'`. Show `->` vs `->>` missing the index. | psql | See the backfill note under Risks. |
-| 10 | "Let's set up CDC." In the console, notice there are two clusters. The extra one costs nothing (CloudWatch: zero DPU, so it scales to zero). Clean it up anyway, but delete the **wrong** one. Act alarmed. PITR in the console brings it back. | console | **PITR not shipped yet.** See the PITR notes under Risks. |
-| 11 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add comments (from the HTML page) and watch them arrive. | console, CLI | Kinesis stream and CDC role set up by hand (not part of `demo/`). Point CDC at the restored cluster. |
-| 12 | Multi-Region, explained verbally while walking through setup in the console. | console | Just show the flow; the real one is already built. |
+| 8 | Query posts by category from `metadata`, then add the expression index on `metadata->>'category'`. Show `->` vs `->>` missing the index. | psql | See the backfill note under Risks. |
+| 9 | "Let's set up CDC." In the console, notice there are two clusters. The extra one costs nothing (CloudWatch: zero DPU, so it scales to zero). Clean it up anyway, but delete the **wrong** one. Act alarmed. PITR in the console brings it back. | console | **PITR not shipped yet.** See the PITR notes under Risks. |
+| 10 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add a comment from psql and watch them arrive. | console, CLI | Kinesis stream and CDC role set up by hand (not part of `demo/`). Point CDC at the restored cluster. |
+| 11 | Multi-Region, explained verbally while walking through setup in the console. | console | Just show the flow; the real one is already built. |
 
 ### 35:00–40:00 The polished app
 
@@ -64,12 +63,12 @@ no intervention. Live TPS.
 - **Timing.** Twelve steps in 30 minutes is about 2.5 minutes each. The rough
   estimate comes to ~32. Easiest cuts: merge 2 and 3, and keep 12 to about a minute.
   There's no slack for Q&A.
-- **PITR (step 10):**
+- **PITR (step 9):**
   - Can you restore a cluster that has been *deleted*?
   - Deletion protection is on by default for clusters created through the API
     (and probably the console), so the "oops" needs a disable step first. That
     can be framed as "this is why it exists".
-  - Restore duration: if it's slow, do step 12 during the restore, then step 11.
+  - Restore duration: if it's slow, do step 11 during the restore, then step 10.
   - Does the restored cluster get a new endpoint? If so, the step-4 server and
     the step-8 page need restarting with the new endpoint, and CDC goes on the
     restored cluster.
@@ -77,17 +76,14 @@ no intervention. Live TPS.
     cluster first to wake it.
 - **Per-transaction limits (3,000 rows, 10 MiB):**
   - Sample data (step 5) has to load in batches.
-  - A metadata backfill in step 9 (`UPDATE` across all posts) would hit the limit.
+  - A metadata backfill in step 8 (`UPDATE` across all posts) would hit the limit.
   - Simplest fix: put `metadata` in the step-1 schema and have step 5's
-    generator fill it in. Step 9 then says "we've been storing front matter
+    generator fill it in. Step 8 then says "we've been storing front matter
     all along" and goes straight to querying.
 - **AI knowing the adapter.** `@aws/aurora-dsql-drizzle` is from Aug 2026 and
   probably newer than the model's training data. Install the DSQL agent skill
   beforehand; that's a legitimate part of the story. Then rehearse each prompt
   until it reliably works. Keep a snapshot of good output for each AI step.
-- **Concurrency between steps.** Step 7's deletes and step 10's cluster deletion
-  happen while AI-built things are running. Make sure step 4's self-check is
-  finished before step 7 starts deleting rows.
 - **FK race specifics (step 7).** Settled by the FK docs: with the FK in place,
   the deleter commits and the commenter fails at `COMMIT` with `OC000`
   (`40001`). Scripted in `sql/07-fk-race.md`.
@@ -100,11 +96,11 @@ no intervention. Live TPS.
 
 - `demo/`: the polished multi-Region app (CDK, Lambda API, React UI, load
   generator) with an idempotent `deploy.sh`
-- `events/`: Rust CLI that tails the CDC Kinesis stream and shows lag (step 11)
+- `events/`: Rust CLI that tails the CDC Kinesis stream and shows lag (step 10)
 - `schema.sql` for step 1, and a reset script
-- `prompts/`: the exact, rehearsed prompts for steps 1, 4, 5 and 8, plus a
+- `prompts/`: the step-1 prompt (run live) and the step-4 API prompt (shown), plus a
   fallback snapshot for each
-- Step 11's Kinesis stream + CDC service role: set up by hand, not in `demo/`
+- Step 10's Kinesis stream + CDC service role: set up by hand, not in `demo/`
   (Kinesis must be `ON_DEMAND` with `MaxRecordSizeInKiB` 10240)
 
 ## Decisions so far

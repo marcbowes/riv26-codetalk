@@ -1,6 +1,6 @@
 -- Step 3 (end): the real schema, loaded with \i after the hand-typed one.
 --
--- No foreign keys and no secondary indexes yet: those are steps 6, 7 and 9.
+-- No foreign keys and no secondary indexes yet: those are steps 6, 7 and 8.
 -- `metadata` is created now, so step 5's sample data can fill it. Adding it
 -- later would mean an UPDATE across every post, and DSQL caps a transaction
 -- at 3,000 modified rows.

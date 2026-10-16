@@ -4,7 +4,7 @@
 and run this. Its script, tuned, is now `sql/05-load-sample-data.sh`, which
 takes about 15 s. This prompt is kept as the reference for how it started.
 If it's ever used again, spell out the shape: Kiro wrote
-`metadata.categories` as an array, and step 9 needs a single
+`metadata.categories` as an array, and step 8 needs a single
 `metadata.category`.
 
 

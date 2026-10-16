@@ -166,7 +166,7 @@ class RealTalk(unittest.TestCase):
         fences = [m.group(1) for m in (re.match(r"^```(\w*)(?:[ \t].*)?$", ln) for ln in lines) if m]
         opening = fences[0::2]   # fences alternate open / close
         cmds = [f for f in opening if f in ("sql", "sh", "prompt")]
-        plain = [f for f in opening if f == ""]
+        plain = [f for f in opening if f in parser.OUTPUT_LANGS]   # ``` or ```text etc.
         beats = [b for s in self.talk.steps for b in s.beats]
         run = [b for b in beats if b.kind == RUN]
         prompt = [b for b in beats if b.kind == PROMPT]

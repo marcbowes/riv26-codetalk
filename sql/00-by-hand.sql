@@ -1,6 +1,6 @@
 -- Steps 1-3, typed by hand on stage (cheat sheet: don't \i this).
 -- A deliberately small schema with the same key design as the real one.
--- Before step 4 it's thrown away for the real one:
+-- At the end of step 3 it's thrown away for the real one:
 --   DROP TABLE comments, posts;  \i sql/01-schema.sql  \i sql/02-first-rows.sql
 
 -- Step 1: posts, with a UUID primary key.
@@ -54,7 +54,7 @@ SELECT id, title, created_at FROM posts ORDER BY created_at DESC LIMIT 10;
 SELECT p.title, c.body, c.created_at
 FROM posts p JOIN comments c ON c.post_id = p.id;
 
--- Then the real schema, before kicking off steps 4 and 5.
+-- Then the real schema, before step 5 loads sample data into it.
 DROP TABLE comments, posts;
 \i sql/01-schema.sql
 \i sql/02-first-rows.sql

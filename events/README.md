@@ -1,8 +1,7 @@
 # events
 
 Tails the Kinesis data stream that Aurora DSQL CDC writes to, and shows each change as it
-arrives with its lag broken down by stage. Used in step 11: add a comment in the page, watch it
-arrive.
+arrives with its lag broken down by stage. Used in step 10: add a comment, watch it arrive.
 
 ```
 lag per stage: cdc = commit→CDC · kinesis = CDC→Kinesis · here = Kinesis→here · total = commit→here
@@ -27,7 +26,7 @@ Reading needs `kinesis:DescribeStreamSummary`, `kinesis:ListShards`, `kinesis:Ge
 and `kinesis:GetRecords` on the stream, plus `kms:Decrypt` if the stream uses a customer
 managed key.
 
-## Step 11: live demo
+## Step 10: live demo
 
 The Kinesis stream, CDC service role and CDC stream are all set up by hand (see the DSQL
 ["Getting started with CDC streams"](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/cdc-setup.html)

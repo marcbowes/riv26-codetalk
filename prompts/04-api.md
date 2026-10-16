@@ -1,4 +1,4 @@
-# Step 4: API, CLI and server (background)
+# Step 4: the API prompt (shown on stage, not run)
 
 ```
 In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM.
@@ -16,8 +16,6 @@ Expected:
 - Uses `@aws/aurora-dsql-drizzle`, and therefore IAM auth with no passwords.
 - Uses `transactionWithRetry` for writes.
 - The server is on localhost:3000.
-
-Must finish before step 7 starts deleting rows.
 
 First dry run (Kiro): about 11 minutes. It first used plain `drizzle-orm` with
 the connector and had to be nudged to the adapter; its CLI called the service

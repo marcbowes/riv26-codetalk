@@ -1,4 +1,4 @@
--- Step 9: query posts by category from the JSONB front matter.
+-- Step 8: query posts by category from the JSONB front matter.
 
 -- Slow: full scan
 EXPLAIN ANALYZE VERBOSE

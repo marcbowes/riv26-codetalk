@@ -8,7 +8,7 @@
 # Every line is ok / WARN / FAIL with what to do about it. Exits 1 if anything
 # failed. Read-only apart from --start-host and --smoke, and the warm-up reads.
 #
-# Environment: CDC_STREAM (dat401-cdc: step 11's Kinesis stream, set up by hand),
+# Environment: CDC_STREAM (dat401-cdc: step 10's Kinesis stream, set up by hand),
 #   LAMBDA_CONCURRENCY (10000)
 set -uo pipefail
 
@@ -236,7 +236,7 @@ PY
 done
 
 # ---------------------------------------------------------------------------
-section "Live demo (step 11)"
+section "Live demo (step 10)"
 
 kin="$(aws kinesis describe-stream-summary --region "$REGION_A" --stream-name "$CDC_STREAM" \
   --query 'StreamDescriptionSummary.[StreamStatus,StreamModeDetails.StreamMode,MaxRecordSizeInKiB]' --output text 2>/dev/null)"
@@ -246,7 +246,7 @@ elif [[ -n "$kin" ]]; then
   warn "Kinesis stream $CDC_STREAM: $kin (CDC wants ON_DEMAND and MaxRecordSizeInKiB 10240)"
 else
   others="$(aws kinesis list-streams --region "$REGION_A" --query 'StreamNames' --output text 2>/dev/null | tr '\t' ' ')"
-  warn "no Kinesis stream $CDC_STREAM in $REGION_A for step 11 (CDC_STREAM=<name> ./preflight.sh; streams here: ${others:-none})"
+  warn "no Kinesis stream $CDC_STREAM in $REGION_A for step 10 (CDC_STREAM=<name> ./preflight.sh; streams here: ${others:-none})"
 fi
 
 # ---------------------------------------------------------------------------
