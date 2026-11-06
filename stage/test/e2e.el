@@ -70,6 +70,8 @@
       (with-temp-file (expand-file-name "code.txt" out)
         (insert (with-current-buffer (car dat401--views) (buffer-string)))))
     (with-temp-file (expand-file-name "copies.txt" out) (insert (format "%d\n" dat401--copies)))
+    (with-temp-file (expand-file-name "recalls.txt" out)
+      (insert (format "%d %d\n" (car dat401--recalls) (cdr dat401--recalls))))
     (with-temp-file (expand-file-name "done.txt" out) (insert "ok\n"))
     (kill-emacs 0)))
 

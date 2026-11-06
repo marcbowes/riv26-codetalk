@@ -673,6 +673,7 @@ BEFORE, the text typed ahead of it on this line)."
 with no entry is copied from wherever it last appears.")
 
 (defvar dat401--copies 0 "How many copies have been acted out (for tests).")
+(defvar dat401--recalls (cons 0 0) "(FOUND . TYPED-INSTEAD) Ctrl-R re-runs (for tests).")
 
 (defun dat401--id-like-p (value)
   "Is VALUE something nobody types by hand (a job id, a cluster id)?"
@@ -841,9 +842,11 @@ fails, it's abandoned (Ctrl-G) and TEXT is typed instead."
     (let ((tail (dat401--pane-text pane)))
       (if (string-match-p "failed reverse-i-search" (substring tail (max 0 (- (length tail) 400))))
           (progn
+            (cl-incf (cdr dat401--recalls))
             (with-current-buffer buf (dat401--term-ctrl "g"))
             (dat401--sleep 0.3)
             (dat401--type pane text))
+        (cl-incf (car dat401--recalls))
         (with-current-buffer buf (dat401--term-return))
         (dat401--wait-prompt pane))))
   (setq dat401--hurry nil))
