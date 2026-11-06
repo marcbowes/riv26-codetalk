@@ -36,7 +36,7 @@ PostgreSQL. Then the agenda.
 
 | # | Step | Tool | Notes |
 |---|---|---|---|
-| 1 | Create clusters A and B in the console (B before switching to Emacs). Connect to A with psql and type a small schema by hand (`sql/00-by-hand.sql`): posts with a UUID key, then an aside on sequences (an identity column without a cache errors; `CACHE 1` is dense but a round trip per id, `CACHE 65536` fast but gappy). Comments: `PRIMARY KEY (post_id, comment_id)`, random vs grouped keys (spread writes vs read locality; a per-post hotspot is fine). | console, psql | Cluster creation takes seconds. Cluster B exists for step 9. Clusters show up as random IDs, so mixing them up later is believable. |
+| 1 | Create a cluster in the console (for show: step 9 deletes it), then the real one by typing `aws dsql create-cluster` (demo-it reads the endpoint from its output). Connect with psql and type a small schema by hand (`sql/00-by-hand.sql`): posts with a UUID key, then an aside on sequences (an identity column without a cache errors; `CACHE 1` is dense but a round trip per id, `CACHE 65536` fast but gappy). Comments: `PRIMARY KEY (post_id, comment_id)`, random vs grouped keys (spread writes vs read locality; a per-post hotspot is fine). | console, demo-it, psql | Cluster creation takes seconds (CLI: ACTIVE in 4 s). The console cluster exists for step 9. Clusters show up as random IDs, so mixing them up later is believable. |
 | 2 | Insert posts and a comment, by hand. | psql | Merge with 3 if short on time. |
 | 3 | Recent posts; comments for a post. Then drop the toy schema and `\i sql/01-schema.sql` (users, slugs, bodies, JSONB metadata) plus `02-first-rows.sql`. | psql | Very little pasting in this talk: type the small things, `\i` the real schema. |
 | 4 | Show the prompt that built the API in rehearsal (Kiro + DSQL power), then the real code with lines highlighted: `demo/api/src/db.ts` (`@aws/aurora-dsql-drizzle` on the connector, IAM auth, recycle before 60 min) and `addComment` in `queries.ts` (`transactionWithRetry`). Not run live. | demo-it | The first dry run's live build took ~11 min and wasn't worth the stage time. |
@@ -44,7 +44,7 @@ PostgreSQL. Then the agenda.
 | 6 | Add the home-page index. `posts (created_at)` gets *ignored* by the planner (each hit needs a lookup into the table, which is its PK B-tree); `INCLUDE (title)` makes it covering: 208 ms → 0.7 ms. No comments index needed. | psql | `CREATE INDEX ASYNC` → job in `sys.jobs` → `wait_for_job` → EXPLAIN again. |
 | 7 | FK race: two psql sessions side by side. A deletes a post while B comments on it, and both commit, leaving an orphan. Add the FK `NOT VALID`; validation fails on the orphan. Clean up, validate (a job), and re-run the race. | psql ×2 | Good teaching moment: why both commit without the FK (no write-write conflict) and what the FK changes under OCC. |
 | 8 | Query posts by category from `metadata`, then add the expression index on `metadata->>'category'`. Show `->` vs `->>` missing the index. | psql | See the backfill note under Risks. |
-| 9 | Scale to zero: in the console there are two clusters; cluster B has never been used and costs nothing (CloudWatch: zero DPU). Delete it: turn off deletion protection first (leave it on when creating B), then delete. | console | Delete B, not A. Point-in-time restore was cut (2026-11-05). |
+| 9 | Scale to zero: in the console there are two clusters; the console one has never been used and costs nothing (CloudWatch: zero DPU). Delete it: turn off deletion protection first (leave it on when creating it), then delete. | console | Delete B, not A. Point-in-time restore was cut (2026-11-05). |
 | 10 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add a comment from psql and watch them arrive. | console, CLI | Kinesis stream and CDC role set up by hand (not part of `demo/`). CDC goes on cluster A. |
 | 11 | Multi-Region, explained verbally while walking through setup in the console. | console | Just show the flow; the real one is already built. |
 
@@ -63,8 +63,8 @@ no intervention. Live TPS.
 
 - **Timing.** Eleven steps in 30 minutes. Easiest cuts if it runs long: merge 2
   and 3, and keep 11 to about a minute. There's no slack for Q&A.
-- **CDC (step 10):** `CreateStream` requires the cluster to be `ACTIVE`; cluster A
-  is busy by then, so that's fine. The Kinesis stream needs `MaxRecordSizeInKiB` 10240.
+- **CDC (step 10):** `CreateStream` requires the cluster to be `ACTIVE`; the blog's
+  cluster is busy by then, so that's fine. The Kinesis stream needs `MaxRecordSizeInKiB` 10240.
 - **Per-transaction limits (3,000 rows, 10 MiB):**
   - Sample data (step 5) has to load in batches.
   - A metadata backfill in step 8 (`UPDATE` across all posts) would hit the limit.

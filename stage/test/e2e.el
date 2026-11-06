@@ -18,7 +18,6 @@
                (1- (cdr (assoc "Step 7 · A race, and foreign keys" dat401--steps-index)))))
          (out (getenv "DAT401_E2E_OUT")))
     (setq dat401-typing-speed 0.05)
-    (puthash "cluster-A-id" (getenv "DAT401_E2E_CLUSTER") dat401--vars)
     (dat401-stage-mode 1)
     (dat401-layout 'a)
     (cl-loop for n from from to to do

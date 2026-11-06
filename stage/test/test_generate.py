@@ -24,6 +24,7 @@ class Panes(unittest.TestCase):
     def test_targets(self):
         self.assertEqual(generate.panes_for("psql", "SELECT 1;"), ["a"])
         self.assertEqual(generate.panes_for("psql · Pane B", "COMMIT;"), ["b"])
+        self.assertEqual(generate.panes_for("shell · pane A", "aws dsql create-cluster"), ["a"])
         self.assertEqual(generate.panes_for("psql · both panes", "\\c"), ["a", "b"])
         self.assertEqual(generate.panes_for("shell · both panes", "psql"), ["a", "b"])
         self.assertEqual(generate.panes_for("shell · second terminal", "./sql/05-load-sample-data.sh"), ["shell"])

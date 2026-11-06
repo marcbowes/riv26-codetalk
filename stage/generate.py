@@ -118,6 +118,8 @@ def panes_for(target, command):
         return ["a", "b"]
     if "pane b" in t:
         return ["b"]
+    if "pane a" in t:
+        return ["a"]
     if t.startswith("psql"):
         return ["a"]
     first = command.strip().splitlines()[0] if command.strip() else ""
@@ -217,9 +219,11 @@ def generate(talk):
                 first = False
             if not forms:
                 continue
-            panes = [p for f in forms for p in f[0]]
-            layout = layout_for(panes) if panes else ["a"]
+            # The layout the first command needs. Later commands add panes as
+            # they need them (step 1: create the cluster in A, then connect
+            # in A and B).
             p0, c0, f0 = forms[0]
+            layout = layout_for(p0) if p0 else ["a"]
             index.append((title, len(steps) + 1))
             head = "(progn (dat401-section %s) (dat401-layout %s) %s)" % (
                 el(title), " ".join("'" + p for p in layout), f0)

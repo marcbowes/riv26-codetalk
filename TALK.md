@@ -125,15 +125,35 @@ see the finished app in two Regions, and throw 20,000 requests a second at it.
 
 There's no instance size, no storage to provision, no engine version, no
 maintenance window. It's ready in about the time it took to read this
-sentence. We'll call it cluster A.
+sentence.
 
-**Then a second one, the same way.** That's cluster B. We won't touch it
-until step 9.
+**And one from the terminal.** It's one API call, and this is the cluster we'll
+build on:
+
+```sh pane A
+aws dsql create-cluster --region us-west-2
+```
+```text
+{
+    "identifier": "e5ugy6wru5xgmpi4lx4e6sxs54",
+    "arn": "arn:aws:dsql:us-west-2:111122223333:cluster/e5ugy6wru5xgmpi4lx4e6sxs54",
+    "status": "CREATING",
+    "creationTime": "2026-11-06T09:50:11.597000-08:00",
+    "encryptionDetails": {
+        "encryptionType": "AWS_OWNED_KMS_KEY",
+        "encryptionStatus": "ENABLED"
+    },
+    "deletionProtectionEnabled": true,
+    "endpoint": "e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws"
+}
+```
+
+In rehearsal it was active four seconds later. That endpoint is all psql needs.
 
 **Connect with psql.** Notice what's missing:
 
 ```sh both panes
-export PGHOST=<cluster-A-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGHOST=<cluster-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST --expires-in 3600)"
 psql
 ```
@@ -231,8 +251,11 @@ scale without limit; comments across *all* posts do, and they still spread out.
 
 - demo-it types it. [`sql/00-by-hand.sql`](sql/00-by-hand.sql) is the same schema.
 - The connect block runs in both panes, so pane B is ready for step 7.
-- Create both clusters in the console before switching to Emacs. Leave
-  deletion protection on for B: step 9 turns it off.
+- The console cluster is only for show. Nothing uses it until step 9 deletes
+  it, so leave its deletion protection on: step 9 turns it off.
+- demo-it reads the endpoint from `create-cluster`'s output and types it in
+  both panes. There's nothing to paste.
+- If psql says the cluster isn't ready, wait a few seconds and run `psql` again.
 </details>
 
 ### Step 2 · Some rows · 9:00–10:30
@@ -280,7 +303,7 @@ gave Kiro in rehearsal, with the Aurora DSQL power installed:
 
 ```prompt
 In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM.
-The cluster endpoint is <cluster-A-endpoint>; connect as admin. The tables already
+The cluster endpoint is <cluster-endpoint>; connect as admin. The tables already
 exist: read the schema from the database.
 
 Operations: ListPosts (newest first, with author), GetPost (with its comments
@@ -367,7 +390,7 @@ second terminal:
 PGHOST=$PGHOST ./sql/05-load-sample-data.sh
 ```
 ```
-Loading into <cluster-A>.dsql.us-west-2.on.aws (8 workers, 3000 rows per transaction)
+Loading into <cluster-id>.dsql.us-west-2.on.aws (8 workers, 3000 rows per transaction)
   users          1000 rows in   1s
   posts        100000 rows in   2s
   comments    1000000 rows in  10s
@@ -695,12 +718,13 @@ index, or model it as rows.
 ### Step 9 · Scale to zero · 27:00–29:00
 
 Before change data capture, let's tidy up. In the console there are **two**
-clusters. Cluster B, the second one from step 1, has never been used. Its
-monitoring shows nothing at all: no DPUs, no instance ticking over.
+clusters: the blog's, and the one I made in the console at the very start.
+That one has never been used. Its monitoring shows nothing at all: no DPUs, no
+instance ticking over.
 
 > **★ DSQL difference: idle costs nothing.** There's no instance to keep
 > warm. A cluster that isn't doing work bills only for its storage, which for
-> cluster B is nothing.
+> an empty cluster is nothing.
 
 We don't need it, so let's delete it. The console won't let me yet, because
 deletion protection is on. Turn it off, then delete. That's exactly what it's
@@ -709,11 +733,13 @@ for.
 <details>
 <summary>Presenter notes</summary>
 
-- Delete **B**, not A. A has the blog, and step 10 needs it.
-- If B's deletion protection is off, skip the protection line or show where
+- Delete the **console** one (the older one), not the blog's: step 10 needs
+  the blog. The blog's ID is the start of `$PGHOST`, in pane A's
+  `create-cluster` output.
+- If its deletion protection is off, skip the protection line or show where
   the setting lives.
-- **Following along:** `aws dsql update-cluster --identifier <B> --no-deletion-protection-enabled`,
-  then `aws dsql delete-cluster --identifier <B>`.
+- **Following along:** `aws dsql update-cluster --identifier <console-cluster-id> --no-deletion-protection-enabled`,
+  then `aws dsql delete-cluster --identifier <console-cluster-id>`.
 </details>
 
 ### Step 10 · Change data capture · 29:00–32:00
@@ -725,7 +751,7 @@ from the latest position, so it shows only new changes):
 ./events/target/release/events --stream <kinesis-stream> --table comments
 ```
 
-Then, in the console: cluster A → create a CDC stream → target the Kinesis
+Then, in the console: the blog's cluster → create a CDC stream → target the Kinesis
 stream → create. Now add a comment, from psql:
 
 ```sql
@@ -774,7 +800,7 @@ console can create the role for you; the CLI steps are in
 Then:
 
 ```sh
-aws dsql create-stream --cluster-identifier <cluster-A-id> \
+aws dsql create-stream --cluster-identifier <cluster-id> \
   --target-definition kinesis={streamArn=<stream-arn>,roleArn=<role-arn>} \
   --ordering UNORDERED --format JSON
 ```
@@ -948,7 +974,7 @@ aws dsql update-cluster --identifier <id> --no-deletion-protection-enabled
 aws dsql delete-cluster --identifier <id>
 
 # Step 10: the CDC stream, then the Kinesis stream
-aws dsql delete-stream --cluster-identifier <cluster-A-id> --stream-identifier <stream-id>
+aws dsql delete-stream --cluster-identifier <cluster-id> --stream-identifier <stream-id>
 aws kinesis delete-stream --stream-name dat401-cdc
 
 # The polished app, its clusters, and the EC2 host

@@ -9,8 +9,8 @@ talk; it types.
 
 - **Panes** are vterm buffers: `psql A`, `psql B`, `shell`, `events` and
   `load`. Each one starts in the repo root with `AWS_PROFILE` and
-  `AWS_REGION` set. Once cluster A is known, they also get `PGHOST` and the
-  other psql settings.
+  `AWS_REGION` set. Once the cluster's endpoint is known, they also get
+  `PGHOST` and the other psql settings.
 - **Layouts** follow the commands. Most steps show psql A on its own. The
   foreign key race shows A and B side by side. The loader shows A with a
   shell along the bottom.
@@ -51,12 +51,11 @@ M-x dat401-start
 | `M-x dat401-stop` | Leave demo mode. The panes stay open |
 | `M-x dat401-reset` | Close every pane and forget the cluster ID, for a clean `dat401-start` (rehearsals) |
 
-The first time a command needs `<cluster-A-id>`, `<kinesis-stream>` or
-another placeholder, the minibuffer asks for it once and remembers it.
-`<job_id>` is never asked for: it's read from the `CREATE INDEX ASYNC` output
-on screen. The first F12 in step 1 asks for `cluster-A-id`: paste it from the
-console. To set it ahead of time instead:
-`(puthash "cluster-A-id" "abc..." dat401--vars)`.
+Nothing needs pasting. Step 1's first F12 types `aws dsql create-cluster`, and
+`<cluster-endpoint>` (and `<cluster-id>`) come from the endpoint it prints.
+`<job_id>` comes from the `CREATE INDEX ASYNC` output on screen. Anything else
+(`<kinesis-stream>` in step 10) is asked for once in the minibuffer, then
+remembered.
 
 Typing waits for each statement or shell command to finish before it types
 the next line. It never waits after the last line, so a step that starts
@@ -83,7 +82,7 @@ It reads TALK.md through `speaker --json`, so both tools agree on what's a
 command and where it runs. A fence's info string picks the pane:
 
 - ```` ```sql ```` goes to psql A.
-- ```` ```sql pane B ```` goes to psql B.
+- ```` ```sql pane B ```` goes to psql B, and ```` ```sh pane A ```` to pane A.
 - ```` ```sh both panes ```` and ```` ```sql both panes ```` go to A, then B.
 - ```` ```sh ```` goes to the shell. Commands that start with `./events/` go
   to the events pane, and commands that run `loadgen` go to the load pane.

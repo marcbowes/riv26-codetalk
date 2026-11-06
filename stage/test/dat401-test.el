@@ -94,3 +94,34 @@
       (should (equal (buffer-string) "function f() {\n"))
       (should (= 1 (length (overlays-in (point-min) (point-max))))))
     (delete-directory dir t)))
+
+(ert-deftest dat401-endpoint-from-create-cluster ()
+  (let ((out (concat "❯ aws dsql create-cluster --region us-west-2\n{\n"
+                     "    \"identifier\": \"e5ugy6wru5xgmpi4lx4e6sxs54\",\n"
+                     "    \"status\": \"CREATING\",\n"
+                     "    \"endpoint\": \"e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws\"\n}\n")))
+    (should (equal (dat401--endpoints out) '("e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws")))
+    (should (equal (dat401--endpoints (concat out (replace-regexp-in-string "e5ug" "zzzz" out)))
+                   '("e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws"
+                     "zzzzy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws")))
+    (should (null (dat401--endpoints "export PGHOST=x.dsql.us-west-2.on.aws")))))
+
+(ert-deftest dat401-new-endpoint-skips-stale-ones ()
+  ;; A rehearsal re-runs create-cluster in the same pane: the old endpoint is
+  ;; still on screen, and must not be used for the new cluster.
+  (let* ((old "    \"endpoint\": \"aaaaaaaaaaaaaaaaaaaaaaaaaa.dsql.us-west-2.on.aws\"\n")
+         (new "    \"endpoint\": \"bbbbbbbbbbbbbbbbbbbbbbbbbb.dsql.us-west-2.on.aws\"\n")
+         (screen old))
+    (cl-letf (((symbol-function 'get-buffer) (lambda (name) (equal name "*psql A*")))
+              ((symbol-function 'dat401--pane-text) (lambda (_p) screen)))
+      (let ((dat401--stale-endpoints (dat401--endpoints old)))
+        (should (null (dat401--new-endpoint)))
+        (setq screen (concat old new))
+        (should (equal (dat401--new-endpoint) "bbbbbbbbbbbbbbbbbbbbbbbbbb.dsql.us-west-2.on.aws"))))))
+
+(ert-deftest dat401-cluster-id-from-endpoint ()
+  (let ((dat401--vars (make-hash-table :test 'equal)))
+    (puthash "cluster-endpoint" "e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws" dat401--vars)
+    (should (equal (dat401--value "cluster-id" 'a) "e5ugy6wru5xgmpi4lx4e6sxs54"))
+    (should (equal (dat401--resolve-static "The cluster endpoint is <cluster-endpoint>; id <cluster-id>.")
+                   "The cluster endpoint is e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws; id e5ugy6wru5xgmpi4lx4e6sxs54."))))

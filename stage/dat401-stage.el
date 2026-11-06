@@ -13,7 +13,8 @@
 ;;   - code on screen: the real file, narrowed to an excerpt from TALK.md, with
 ;;     the excerpt's lines highlighted and the lines between them dimmed;
 ;;   - placeholders filled in as they're typed: <job_id> from the pane's own
-;;     output, anything else (<cluster-A-id>, ...) asked for once.
+;;     output, <cluster-endpoint> from `create-cluster's, anything else
+;;     (<kinesis-stream>, ...) asked for once.
 ;;
 ;; Keys while the demo runs: F12 or PgDn (clickers send PgDn) runs the next
 ;; step; C-u N F12 jumps to step N; M-x dat401-goto jumps to a talk step by
@@ -37,7 +38,7 @@
   :type 'directory)
 
 (defcustom dat401-aws-profile "bowes" "AWS_PROFILE for every pane." :type 'string)
-(defcustom dat401-aws-region "us-west-2" "AWS_REGION for every pane, and cluster A's Region." :type 'string)
+(defcustom dat401-aws-region "us-west-2" "AWS_REGION for every pane." :type 'string)
 (defcustom dat401-text-scale 2 "Text scale for panes, banners and prompts." :type 'integer)
 
 (defcustom dat401-typing-speed 1.0
@@ -50,7 +51,7 @@
   :type 'integer)
 
 (defvar dat401--vars (make-hash-table :test 'equal)
-  "Placeholder values, e.g. \"cluster-A-id\".")
+  "Placeholder values, e.g. \"cluster-endpoint\".")
 
 (defvar dat401--section "" "The current talk step, shown in the header line.")
 (defvar dat401--layout nil "The panes on screen, e.g. (a b).")
@@ -66,7 +67,7 @@
 
 (defun dat401--env ()
   "Environment for new panes.
-AWS settings always; psql settings once cluster A is known."
+AWS settings always; psql settings once the cluster's endpoint is known."
   (append
    (list (concat "AWS_PROFILE=" dat401-aws-profile)
          (concat "AWS_REGION=" dat401-aws-region)
@@ -74,8 +75,8 @@ AWS settings always; psql settings once cluster A is known."
          "PSQL_PAGER=cat" "PAGER=cat"
          ;; No zsh "%" partial-line marker when vterm resizes a new pane.
          "PROMPT_EOL_MARK=")
-   (when-let* ((id (gethash "cluster-A-id" dat401--vars)))
-     (list (format "PGHOST=%s.dsql.%s.on.aws" id dat401-aws-region)
+   (when-let* ((endpoint (gethash "cluster-endpoint" dat401--vars)))
+     (list (concat "PGHOST=" endpoint)
            "PGUSER=admin" "PGDATABASE=postgres" "PGSSLMODE=require"))
    process-environment))
 
@@ -128,20 +129,21 @@ AWS settings always; psql settings once cluster A is known."
     (dat401--tidy panes)))
 
 (defun dat401--tidy (panes)
-  "Clear the PANES that sit at a shell prompt, once they've settled at their
-new size. A resize makes the shell redraw its prompt, which leaves stray
-lines (and a new pane draws its first prompt at whatever size it started
-at). Panes in psql or running something are left alone."
-  (redisplay t)
-  (dolist (p panes)
-    (when (buffer-local-value 'dat401--fresh (dat401--pane p))
-      (dat401--wait-for (lambda () (dat401--shell-prompt-p p)) 5)
-      (with-current-buffer (dat401--pane p) (setq dat401--fresh nil))))
-  (sit-for 0.4)
-  (dolist (p panes)
-    (when (dat401--shell-prompt-p p)
-      (with-current-buffer (dat401--pane p) (vterm-clear))))
-  (sit-for 0.2))
+  "Clear the new PANES once their shell has drawn its first prompt at the size
+they're shown at. A pane is created at one size and shown at another, and
+the shell's redraw leaves stray lines. Panes with history are left alone."
+  (let ((fresh (cl-remove-if-not
+                (lambda (p) (buffer-local-value 'dat401--fresh (dat401--pane p))) panes)))
+    (when fresh
+      (redisplay t)
+      (dolist (p fresh)
+        (dat401--wait-for (lambda () (dat401--shell-prompt-p p)) 5))
+      (sit-for 0.4)
+      (dolist (p fresh)
+        (with-current-buffer (dat401--pane p)
+          (setq dat401--fresh nil)
+          (vterm-clear)))
+      (sit-for 0.2))))
 
 (defun dat401--show (pane)
   "Make sure PANE is on screen, switching layout if needed."
@@ -278,14 +280,38 @@ lines are highlighted; the lines between them are dimmed."
       (setq found (match-string 1 text) pos (match-end 0)))
     found))
 
+(defun dat401--endpoints (text)
+  "Every cluster endpoint in `create-cluster' output TEXT, oldest first."
+  (let ((pos 0) out)
+    (while (string-match "\"endpoint\": \"\\([a-z0-9]+\\.dsql\\.[a-z0-9-]+\\.on\\.aws\\)\"" text pos)
+      (push (match-string 1 text) out)
+      (setq pos (match-end 0)))
+    (nreverse out)))
+
+(defvar dat401--stale-endpoints nil
+  "Endpoints on screen before the latest `create-cluster': not the new cluster's.")
+
+(defun dat401--new-endpoint ()
+  "The endpoint the latest `create-cluster' printed, if it has yet."
+  (cl-some (lambda (p)
+             (when (get-buffer (dat401--buffer-name p))
+               (car (last (cl-set-difference (dat401--endpoints (dat401--pane-text p))
+                                             dat401--stale-endpoints :test #'equal)))))
+           '(a b shell)))
+
 (defun dat401--value (name pane)
   "Value for <NAME>, typing into PANE."
   (cond
    ((equal name "job_id")
     (or (dat401--wait-for (lambda () (dat401--last-job-id (dat401--pane-text pane))) 30)
         (read-string "job_id: ")))
-   ((equal name "cluster-A-endpoint")
-    (format "%s.dsql.%s.on.aws" (dat401--value "cluster-A-id" pane) dat401-aws-region))
+   ((equal name "cluster-endpoint")
+    (or (gethash name dat401--vars)
+        (puthash name (or (dat401--wait-for #'dat401--new-endpoint 30)
+                          (string-trim (read-string "cluster endpoint: ")))
+                 dat401--vars)))
+   ((equal name "cluster-id")
+    (car (split-string (dat401--value "cluster-endpoint" pane) "\\.")))
    (t
     (or (gethash name dat401--vars)
         (puthash name (string-trim (read-string (format "%s: " name))) dat401--vars)))))
@@ -298,9 +324,9 @@ lines are highlighted; the lines between them are dimmed."
 (defun dat401--resolve-static (text)
   "Fill in placeholders we already know (for display only)."
   (dolist (name (dat401--placeholders text) text)
-    (let ((v (if (equal name "cluster-A-endpoint")
-                 (when-let* ((id (gethash "cluster-A-id" dat401--vars)))
-                   (format "%s.dsql.%s.on.aws" id dat401-aws-region))
+    (let ((v (if (equal name "cluster-id")
+                 (when-let* ((endpoint (gethash "cluster-endpoint" dat401--vars)))
+                   (car (split-string endpoint "\\.")))
                (gethash name dat401--vars))))
       (when v (setq text (replace-regexp-in-string (regexp-quote (format "<%s>" name)) v text t t))))))
 
@@ -339,8 +365,9 @@ then a hesitation before a word."
       (read-event nil nil 0.01))))
 
 (defun dat401--pane-text (pane)
+  "PANE's text, with lines the terminal wrapped joined back up."
   (with-current-buffer (dat401--pane pane)
-    (buffer-substring-no-properties (point-min) (point-max))))
+    (substring-no-properties (filter-buffer-substring (point-min) (point-max)))))
 
 (defun dat401--wait-for (pred timeout)
   "Poll PRED until it returns non-nil or TIMEOUT seconds pass."
@@ -381,6 +408,14 @@ wait after the last line: it may start something that keeps running."
     (while lines
       (let* ((line (dat401--resolve (pop lines) pane))
              (shell (dat401--shell-prompt-p pane)))
+        (when (string-match-p "aws dsql create-cluster" line)
+          ;; A new cluster: its endpoint is whichever one appears next.
+          (setq dat401--stale-endpoints
+                (apply #'append (mapcar (lambda (p)
+                                          (when (get-buffer (dat401--buffer-name p))
+                                            (dat401--endpoints (dat401--pane-text p))))
+                                        '(a b shell))))
+          (remhash "cluster-endpoint" dat401--vars))
         (dat401--type-line pane line)
         (when (and lines (or shell (dat401--statement-end-p line)))
           (sit-for 0.3)
@@ -391,6 +426,9 @@ wait after the last line: it may start something that keeps running."
   (let ((panes (if (listp panes) panes (list panes))))
     (setq dat401--hurry nil)
     (dat401--clear-overlays)
+    ;; Put every target pane on screen first, so the layout doesn't change
+    ;; halfway through.
+    (dolist (p panes) (dat401--show p))
     (dolist (p panes)
       (dat401--show p)
       (select-window (get-buffer-window (dat401--pane p)))
@@ -440,7 +478,8 @@ wait after the last line: it may start something that keeps running."
 
 (defun dat401-reset ()
   "Leave the demo, close every pane (ending their psql sessions) and forget
-placeholder values like the cluster ID. The next `dat401-start' starts clean."
+placeholder values like the cluster endpoint. The next `dat401-start' starts
+clean."
   (interactive)
   (ignore-errors (dat401-stop))
   (dolist (name (append (mapcar (lambda (p) (dat401--buffer-name (car p))) dat401--pane-titles)
@@ -450,7 +489,7 @@ placeholder values like the cluster ID. The next `dat401-start' starts clean."
         (set-process-query-on-exit-flag proc nil))
       (kill-buffer buf)))
   (clrhash dat401--vars)
-  (setq dat401--layout nil dat401--section "")
+  (setq dat401--layout nil dat401--section "" dat401--stale-endpoints nil)
   (message "DAT401: reset. M-x dat401-start to begin again"))
 
 (provide 'dat401-stage)
