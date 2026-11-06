@@ -427,7 +427,9 @@ first, then the agent, quietly."
            '(a b shell)))
 
 (defconst dat401--scraped
-  '(("kinesis-stream-arn" . "\"StreamARN\": \"\\([^\"\n]+\\)\""))
+  '(("kinesis-stream-arn" . "\"StreamARN\": \"\\([^\"\n]+\\)\"")
+    ("cdc-role-arn" . "\"\\(arn:aws:iam::[0-9]+:role/[^\"\n]+\\)\"")
+    ("cdc-stream-id" . "\"streamIdentifier\": \"\\([a-z0-9]\\{26\\}\\)\""))
   "Placeholders read from the latest output in the pane being typed into.")
 
 (defun dat401--last-match (regexp text)
@@ -731,7 +733,9 @@ BEFORE, the text typed ahead of it on this line)."
 (defconst dat401--copy-context
   '(("cluster-id" . "\"identifier\": \"")
     ("cluster-endpoint" . "\"endpoint\": \"")
-    ("kinesis-stream-arn" . "\"StreamARN\": \""))
+    ("kinesis-stream-arn" . "\"StreamARN\": \"")
+    ("cdc-role-arn" . "\"")
+    ("cdc-stream-id" . "\"streamIdentifier\": \""))
   "Where on screen a value is copied from: the text just before it. A value
 with no entry is copied from wherever it last appears.")
 
@@ -852,14 +856,15 @@ copied from the screen if it's there, pasted if it's an id, otherwise typed."
                                 '(a b shell))))
   (remhash "cluster-endpoint" dat401--vars))
 
-(defun dat401--wait-settled (pane &optional timeout)
+(defun dat401--wait-settled (pane &optional timeout settle)
   "Wait until PANE has finished what it was given. Right after Enter the
 screen can still show the old prompt (the terminal hasn't echoed yet), so
-give it a moment, then wait for a prompt that stays put: no new output for
-a beat. Up to TIMEOUT seconds (default `dat401-wait-timeout')."
+give it a moment (SETTLE seconds, default 0.3), then wait for a prompt that
+stays put: no new output for a beat. Up to TIMEOUT seconds (default
+`dat401-wait-timeout')."
   (let ((deadline (+ (float-time) (or timeout dat401-wait-timeout)))
         (done nil))
-    (dat401--pause-for 0.3)
+    (dat401--pause-for (or settle 0.3))
     (while (and (not done) (< (float-time) deadline))
       (dat401--wait-for (lambda () (dat401--at-prompt-p pane))
                         (max 0.1 (- deadline (float-time))))
@@ -872,10 +877,17 @@ a beat. Up to TIMEOUT seconds (default `dat401-wait-timeout')."
 (defun dat401--wait-prompt (pane)
   (dat401--wait-settled pane))
 
+(defun dat401--ready (pane)
+  "Wait for PANE to be idle before typing into it: a command an early F12
+typed ahead of would run too soon (step 10: the viewer before the CDC
+stream is active)."
+  (dat401--wait-settled pane dat401-wait-timeout 0.05))
+
 (defun dat401--type (pane text)
   "Type TEXT into PANE line by line. Between lines, wait for a shell command
 or a psql statement to finish, so nothing is typed over its output. Never
 wait after the last line: it may start something that keeps running."
+  (dat401--ready pane)
   (let ((lines (split-string text "\n" t)))
     (while lines
       (let* ((line (pop lines))
@@ -912,6 +924,7 @@ fails, it's abandoned (Ctrl-G) and TEXT is typed instead."
   (dat401--start (list pane))
   (select-window (get-buffer-window (dat401--pane pane)))
   (let ((buf (dat401--pane pane)))
+    (dat401--ready pane)
     (dat401--sleep (dat401--pause 600 0.3))
     (with-current-buffer buf (dat401--term-ctrl "r"))
     (dat401--sleep (dat401--pause 400 0.3))
@@ -961,6 +974,7 @@ paste, so the shell shows it as pasted and runs it on Enter."
     (dat401-unhighlight))
   (dat401--start (list pane))
   (select-window (get-buffer-window (dat401--pane pane)))
+  (dat401--ready pane)
   (let ((text (string-trim-right (dat401--resolve text pane))))
     (dat401--sleep (dat401--pause 600 0.3))
     (if (dat401--shell-prompt-p pane)

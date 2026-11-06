@@ -366,6 +366,7 @@
               ((symbol-function 'get-buffer-window) #'ignore)
               ((symbol-function 'dat401--pane) (lambda (_) (current-buffer)))
               ((symbol-function 'dat401--sleep) #'ignore)
+              ((symbol-function 'dat401--ready) #'ignore)
               ((symbol-function 'dat401--wait-prompt) #'ignore)
               ((symbol-function 'dat401--pane-text) (lambda (_) screen))
               ((symbol-function 'vterm-send-key) (lambda (k &rest mods) (push (cons k (nth 2 mods)) keys)))
@@ -492,3 +493,29 @@
           ;; Nothing pasted at all: clear.
           (should-not (dat401--keeps-highlights-p "select 1;" 'a)))
       (kill-buffer buf))))
+
+(ert-deftest dat401-cdc-values-come-from-the-screen ()
+  (let ((screen (concat
+                 "❯ aws iam get-role --role-name dat401-cdc --query Role.Arn\n"
+                 "\"arn:aws:iam::332656840177:role/dat401-cdc\"\n"
+                 "❯ aws kinesis describe-stream-summary --stream-name dat401-cdc\n"
+                 "        \"StreamARN\": \"arn:aws:kinesis:us-west-2:332656840177:stream/dat401-cdc\",\n"
+                 "❯ aws dsql create-stream --cluster-identifier x --target-definition \"kinesis={...}\"\n"
+                 "{\n    \"clusterIdentifier\": \"zbugzhpfjjqd3gtm7q6i3k6afq\",\n"
+                 "    \"streamIdentifier\": \"wbugzllbseaqjoqd4txne3nm7i\",\n"
+                 "    \"arn\": \"arn:aws:dsql:us-west-2:332656840177:cluster/zbugzhpfjjqd3gtm7q6i3k6afq/stream/wbugzllbseaqjoqd4txne3nm7i\",\n"
+                 "}\n❯ ")))
+    (cl-letf (((symbol-function 'dat401--pane-text) (lambda (_) screen)))
+      (should (equal (dat401--value "cdc-role-arn" 'events) "arn:aws:iam::332656840177:role/dat401-cdc"))
+      (should (equal (dat401--value "kinesis-stream-arn" 'events)
+                     "arn:aws:kinesis:us-west-2:332656840177:stream/dat401-cdc"))
+      (should (equal (dat401--value "cdc-stream-id" 'events) "wbugzllbseaqjoqd4txne3nm7i")))))
+
+(ert-deftest dat401-ready-waits-for-an-idle-pane ()
+  ;; A command still running (no prompt yet): typing waits for it.
+  (let* ((screen "❯ aws dsql wait stream-active --stream-identifier x\n")
+         (t0 (float-time)))
+    (run-at-time 0.6 nil (lambda () (setq screen (concat screen "\n❯ "))))
+    (cl-letf (((symbol-function 'dat401--pane-text) (lambda (_) screen)))
+      (dat401--ready 'events))
+    (should (> (- (float-time) t0) 0.6))))

@@ -18,7 +18,7 @@
         ("Step 7 · A race, and foreign keys" . 41)
         ("Step 8 · JSONB, and an index on an expression" . 62)
         ("Step 10 · Change data capture" . 72)
-        ("Scale" . 78)))
+        ("Scale" . 81)))
 
 (demo-it-create
  :advanced-mode
@@ -208,16 +208,22 @@ order by created_at desc limit 20;" "= 'databases'")
  ;; 72. Step 10 · Change data capture (TALK.md line 804): run shell · pane events
  (progn (dat401-section "Step 10 · Change data capture") (dat401-layout 'a 'events) (dat401-run 'events "aws kinesis create-stream --stream-name dat401-cdc --stream-mode-details StreamMode=ON_DEMAND --max-record-size-in-ki-b 10240"))
  ;; 73. run shell · pane events
+ (dat401-run 'events "aws iam get-role --role-name dat401-cdc --query Role.Arn")
+ ;; 74. run shell · pane events
  (dat401-run 'events "aws kinesis describe-stream-summary --stream-name dat401-cdc")
- ;; 74. stage: highlight StreamARN
+ ;; 75. stage: highlight StreamARN
  (dat401-highlight 'events "StreamARN")
- ;; 75. run shell · pane events
+ ;; 76. run shell · pane events
+ (dat401-run 'events "aws dsql create-stream --cluster-identifier ${PGHOST%%.*} --target-definition \"kinesis={streamArn=<kinesis-stream-arn>,roleArn=<cdc-role-arn>}\" --ordering UNORDERED --format JSON")
+ ;; 77. run shell · pane events
+ (dat401-run 'events "aws dsql wait stream-active --cluster-identifier ${PGHOST%%.*} --stream-identifier <cdc-stream-id>")
+ ;; 78. run shell · pane events
  (dat401-run 'events "./events/target/release/events --stream <kinesis-stream-arn> --table comments")
- ;; 76. run psql
+ ;; 79. run psql
  (dat401-run 'a "select id as post_id from posts where slug like 'post-%' limit 1 \\gset")
- ;; 77. run psql
+ ;; 80. run psql
  (dat401-run 'a "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Hello from the stage');")
- ;; 78. Scale (TALK.md line 969): run shell
+ ;; 81. Scale (TALK.md line 1002): run shell
  (progn (dat401-section "Scale") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
 ./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""))
  )

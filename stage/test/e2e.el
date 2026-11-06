@@ -23,10 +23,21 @@
   (let* ((spec (getenv "DAT401_E2E_STEPS"))
          (range (and spec (> (length spec) 0) (split-string spec "-")))
          (from (if range (string-to-number (car range)) 1))
-         ;; By default: the intro through step 8 (JSONB), wherever step 10 starts.
+         ;; By default: up to DAT401_E2E_UNTIL (a talk step's title; default step
+         ;; 10, so the intro through step 8).
          (to (if range (string-to-number (cadr range))
-               (1- (cdr (assoc "Step 10 · Change data capture" dat401--steps-index)))))
+               (1- (cdr (assoc (or (getenv "DAT401_E2E_UNTIL") "Step 10 · Change data capture")
+                               dat401--steps-index)))))
          (out (getenv "DAT401_E2E_OUT")))
+    ;; DAT401_E2E_STREAM: the test's own Kinesis stream, not the talk's.
+    (when-let* ((stream (getenv "DAT401_E2E_STREAM")))
+      (setq demo-it--steps
+            (mapcar (lambda (step)
+                      (car (read-from-string
+                            (replace-regexp-in-string "--stream-name dat401-cdc\\b"
+                                                      (concat "--stream-name " stream)
+                                                      (prin1-to-string step) t t))))
+                    demo-it--steps)))
     (setq dat401-typing-speed 0.05
           ;; No real agent in tests: `cat' shows what's typed, and would echo it
           ;; back (a second copy) if an Enter were ever sent.
@@ -62,6 +73,11 @@
                                          dat401--mark-overlays))))
                    (write-region (format "%d %S\n" n marked) nil
                                  (expand-file-name "marks.txt" out) t 'silent)))
+               ;; The CDC viewer needs a moment to attach (it reads from the
+               ;; latest position) before anything is inserted.
+               (when (string-match-p "events/target/release/events" (format "%S" step))
+                 (dat401-e2e--wait-text 'events "Ctrl-C to stop" 30)
+                 (sit-for 3))
                ;; What a presenter does by eye: wait for the command to finish.
                (cond
                 ((string-match-p "05-load-sample-data" (format "%S" step))
@@ -71,7 +87,10 @@
                    (when (get-buffer (dat401--buffer-name p))
                      (dat401--wait-for (lambda () (dat401--at-prompt-p p)) 60)))))
                (sit-for 0.5)))
-    (dolist (p '(a b shell))
+    ;; The CDC viewer takes a moment to show the comment.
+    (when (get-buffer (dat401--buffer-name 'events))
+      (dat401-e2e--wait-text 'events "Hello from the stage" 30))
+    (dolist (p '(a b shell events))
       (when (get-buffer (dat401--buffer-name p))
         (with-temp-file (expand-file-name (format "pane-%s.txt" p) out)
           (insert (dat401--pane-text p)))))

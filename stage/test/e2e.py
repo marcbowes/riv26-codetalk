@@ -28,11 +28,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 
 
-def run(steps, timeout=900, jump=None):
+E2E_STREAM = "dat401-cdc-e2e"   # the test's own Kinesis stream (the role allows dat401-cdc*)
+
+
+def run(steps, timeout=900, jump=None, until=None):
     out = tempfile.mkdtemp(prefix="dat401-e2e-")
-    env = dict(os.environ, DAT401_E2E_STEPS=steps, DAT401_E2E_OUT=out, TERM="xterm-256color")
+    env = dict(os.environ, DAT401_E2E_STEPS=steps, DAT401_E2E_OUT=out, TERM="xterm-256color",
+               DAT401_E2E_STREAM=E2E_STREAM)
     if jump:
         env["DAT401_E2E_JUMP"] = jump
+    if until:
+        env["DAT401_E2E_UNTIL"] = until
     if not steps:
         env.pop("DAT401_E2E_STEPS")
     pid, fd = pty.fork()
@@ -93,23 +99,37 @@ JUMP_CHECKS = {
 }
 
 
+def option(args, name):
+    if name in args:
+        i = args.index(name)
+        value = args[i + 1]
+        del args[i:i + 2]
+        return value
+    return None
+
+
+def delete_e2e_stream():
+    r = subprocess.run(["aws", "kinesis", "delete-stream", "--stream-name", E2E_STREAM],
+                       capture_output=True, text=True)
+    return "deleted" if r.returncode == 0 else "none"
+
+
 def main():
     args = sys.argv[1:]
-    jump = None
-    if "--jump" in args:
-        # e2e.py --jump "Step 7 · A race, and foreign keys": what C-F12 does
-        # from a fresh start (fast-forward), then the rest as usual.
-        i = args.index("--jump")
-        jump = args[i + 1]
-        del args[i:i + 2]
+    # --jump "Step 7 · ...": what C-F12 does from a fresh start (fast-forward),
+    # then the rest as usual. --until "Scale": stop before that talk step.
+    jump = option(args, "--jump")
+    until = option(args, "--until")
     steps = args[0] if args else ""
     os.environ.setdefault("AWS_PROFILE", "bowes")
-    out, status = run(steps, jump=jump)
+    out, status = run(steps, jump=jump, until=until)
+    print("test Kinesis stream:", delete_e2e_stream())
     print("output in", out, "exit", status)
     print("deleted the cluster step 1 made:", delete_created_cluster(read(out, "pane-a.txt")))
     if read(out, "error.txt"):
         print("ERROR:", read(out, "error.txt"))
     a, b, shell = read(out, "pane-a.txt"), read(out, "pane-b.txt"), read(out, "pane-shell.txt")
+    events = read(out, "pane-events.txt")
     marks = [line.split(" ", 1)[1] for line in read(out, "marks.txt").splitlines() if " " in line]
     counts = [m.count('"') // 2 for m in marks]
     checks = [
@@ -151,10 +171,18 @@ def main():
         ("<job_id> filled from the pane", bool(re.search(r"wait_for_job\('[a-z0-9]{26}'\)", a))),
         ("index jobs waited for", "succeeded" in a and " t" in a),
         ("covering index used", "Index Only Scan Backward using posts_recent_idx" in a),
+        ("step 10: CDC stream created, then active", '"status": "CREATING"' in events
+         and "wait stream-active" in events),
+        ("step 10: the comment shows up in the CDC viewer", "Hello from the stage" in events),
         ("no unresolved placeholders typed", not re.search(r"<(job_id|cluster-endpoint|cluster-id)>", a + b)),
     ]
-    if jump:
+    if jump and "Step 10" in jump:
+        checks = [c for c in checks if c[0].startswith("step 10") or c[0] in
+                  ("finished", "no unresolved placeholders typed")]
+    elif jump:
         checks = [c for c in checks if c[0] in JUMP_CHECKS]
+    else:
+        checks = [c for c in checks if not c[0].startswith("step 10")]
     width = max(len(c) for c, _ in checks)
     ok = True
     for name, passed in checks:

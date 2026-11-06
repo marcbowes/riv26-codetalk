@@ -86,6 +86,13 @@ which mangles full-screen programs. `dat401-start` makes the whole frame's
 font big instead (Doom's `doom-big-font-mode`), and `dat401-stop` puts it
 back.
 
+Step 10 needs the IAM role DSQL uses to write CDC records to Kinesis. Create
+it once, before the talk. It's safe to re-run:
+
+```sh
+AWS_PROFILE=bowes AWS_REGION=us-west-2 stage/setup-cdc-role.sh
+```
+
 ## Running it
 
 ```
@@ -107,8 +114,9 @@ You never copy anything by hand:
   (and `<cluster-id>`) come from the endpoint it prints, copied from that
   line.
 - `<job_id>` comes from the `CREATE INDEX ASYNC` output on screen.
-- `<kinesis-stream-arn>` comes from the `describe-stream-summary` output in
-  step 10.
+- In step 10, `<kinesis-stream-arn>` comes from the `describe-stream-summary`
+  output, `<cdc-role-arn>` from `get-role`, and `<cdc-stream-id>` from
+  `create-stream`.
 - Anything else is asked for once in the minibuffer, then remembered.
 
 Step 1 goes like this:
@@ -119,8 +127,9 @@ Step 1 goes like this:
 5. Type the token export and `psql` in pane A, full screen.
 6. Open pane B, paste its exports, then type `psql` there.
 
-Typing waits for each statement or shell command to finish before it types
-the next line. It never waits after the last line, so a step that starts
+Typing waits for a pane to be idle before it types into it, and for each
+statement or shell command to finish before the next line. An early F12
+can't type ahead of a running command. It never waits after the last line, so a step that starts
 something long-running (the events viewer, the load generator) hands control
 back to you.
 

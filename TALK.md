@@ -811,7 +811,18 @@ large rows into fragments of up to 10 MiB:
 aws kinesis create-stream --stream-name dat401-cdc --stream-mode-details StreamMode=ON_DEMAND --max-record-size-in-ki-b 10240
 ```
 
-It's active about five seconds later:
+DSQL writes to it through an IAM role, which I set up earlier. The console can
+make one for you; [`stage/setup-cdc-role.sh`](stage/setup-cdc-role.sh) is the
+CLI version.
+
+```sh pane events
+aws iam get-role --role-name dat401-cdc --query Role.Arn
+```
+```text
+"arn:aws:iam::111122223333:role/dat401-cdc"
+```
+
+The stream is active about five seconds after we asked for it:
 
 ```sh pane events
 aws kinesis describe-stream-summary --stream-name dat401-cdc
@@ -832,15 +843,37 @@ aws kinesis describe-stream-summary --stream-name dat401-cdc
 ```
 
 <!-- stage: highlight StreamARN -->
-Start the viewer on it. It reads from the latest position, so it shows only
-new changes:
+Now point the cluster at it. That's one call, a CDC stream: our cluster, that
+Kinesis stream, and the role.
+
+```sh pane events
+aws dsql create-stream --cluster-identifier ${PGHOST%%.*} --target-definition "kinesis={streamArn=<kinesis-stream-arn>,roleArn=<cdc-role-arn>}" --ordering UNORDERED --format JSON
+```
+```text
+{
+    "clusterIdentifier": "e5ugy6wru5xgmpi4lx4e6sxs54",
+    "streamIdentifier": "wbugzllbseaqjoqd4txne3nm7i",
+    "status": "CREATING",
+    "ordering": "UNORDERED",
+    "format": "JSON",
+    ...
+}
+```
+
+It takes under a minute to start. In rehearsal: 44 seconds.
+
+```sh pane events
+aws dsql wait stream-active --cluster-identifier ${PGHOST%%.*} --stream-identifier <cdc-stream-id>
+```
+
+Start the viewer on the Kinesis stream. It reads from the latest position, so
+it shows only new changes:
 
 ```sh pane events
 ./events/target/release/events --stream <kinesis-stream-arn> --table comments
 ```
 
-Then, in the console: the blog's cluster → create a CDC stream → target the Kinesis
-stream → create. Now add a comment, from psql:
+Now add a comment, from psql:
 
 ```sql
 SELECT id AS post_id FROM posts WHERE slug LIKE 'post-%' LIMIT 1 \gset
@@ -872,27 +905,27 @@ The four lag columns break the trip down: commit → CDC → Kinesis → this la
 > workload.
 
 <details>
-<summary>Following along: the CDC stream from the CLI</summary>
+<summary>Following along: the role</summary>
 
-DSQL writes to the Kinesis stream through a service role that trusts `dsql.amazonaws.com`. The
-console can create the role for you; the CLI steps are in
+DSQL writes to the Kinesis stream through a service role that trusts
+`dsql.amazonaws.com` and can write to the stream. The console creates one
+for you when you create a CDC stream there. [`stage/setup-cdc-role.sh`](stage/setup-cdc-role.sh)
+creates `dat401-cdc` from the CLI, for any cluster in your account and
+Region. More in
 [Getting started with CDC streams](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/cdc-setup.html).
-Then:
-
-```sh
-aws dsql create-stream --cluster-identifier <cluster-id> \
-  --target-definition kinesis={streamArn=<kinesis-stream-arn>,roleArn=<role-arn>} \
-  --ordering UNORDERED --format JSON
-```
 </details>
 
 <details>
 <summary>Presenter notes</summary>
 
-- `create-stream` fails if `dat401-cdc` already exists. Between rehearsals:
-  `aws kinesis delete-stream --stream-name dat401-cdc`.
-- The viewer's `--stream` takes the ARN, copied from the
-  `describe-stream-summary` output (highlighted first).
+- Before the talk, once: `stage/setup-cdc-role.sh` (the role).
+- `aws kinesis create-stream` fails if `dat401-cdc` already exists. Between
+  rehearsals: `aws kinesis delete-stream --stream-name dat401-cdc`. The CDC
+  stream itself goes when its cluster is deleted.
+- The Kinesis ARN and the role ARN are copied from the output above into
+  `create-stream`; the stream ID is copied from its output into the wait.
+- Talk over the wait (under a minute): CDC's uses, Lambda, Firehose. The
+  insert has to come after it, or the change isn't captured.
 </details>
 
 ### Step 11 · Multi-Region · 32:00–35:00
