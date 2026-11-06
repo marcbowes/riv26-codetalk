@@ -131,7 +131,7 @@ sentence.
 build on:
 
 ```sh pane A
-aws dsql create-cluster --region us-west-2
+aws dsql create-cluster
 ```
 ```text
 {
@@ -157,7 +157,7 @@ all psql needs. In rehearsal the cluster was active four seconds later.
 **Connect with psql.** Notice what's missing:
 
 ```sh pane A
-export PGHOST=<cluster-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGHOST=<cluster-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 ```
 <!-- stage: clear -->
 ```sh pane A
@@ -179,7 +179,7 @@ nothing in a config file.
 psql:
 
 ```sh pane B paste
-export PGHOST=<cluster-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGHOST=<cluster-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST --expires-in 3600)"
 ```
 ```sh pane B
@@ -247,9 +247,9 @@ scale without limit; comments across *all* posts do, and they still spread out.
 - The console cluster is only for show. Nothing uses it until step 9 deletes
   it, so leave its deletion protection on: step 9 turns it off.
 - F12s after `create-cluster`: highlight the identifier; highlight the
-  endpoint; type the `PGHOST` export (the identifier is pasted, and
-  highlighted too); clear; the token and `psql`. demo-it reads the identifier
-  from the output: there's nothing to copy by hand.
+  endpoint; type the `PGHOST` export (the endpoint is copied from the output
+  and pasted, and highlighted too); clear; the token and `psql`. There's
+  nothing to copy by hand.
 - Pane B: F12 opens it, F12 pastes the exports, F12 runs `psql`. It's ready
   for step 7.
 - If psql says the cluster isn't ready, wait a few seconds and run `psql` again.
@@ -315,12 +315,13 @@ category, tags and reading time.
 
 ### Step 4 · An API, from one prompt · 12:00–13:00
 
-With a schema in place, the application is the easy part. This is the prompt we
-gave Kiro in rehearsal, with the Aurora DSQL power installed:
+With a schema in place, the application is the easy part. I'll ask Claude Code
+for it. It has the Aurora DSQL skill installed, which is the only DSQL-specific
+setup here:
 
 ```prompt
 In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM.
-The cluster endpoint is <cluster-endpoint>; connect as admin. The tables already
+The cluster endpoint is in $PGHOST; connect as admin. The tables already
 exist: read the schema from the database.
 
 Operations: ListPosts (newest first, with author), GetPost (with its comments
@@ -330,9 +331,10 @@ Give me an HTTP server and a small CLI that calls it over HTTP. Start the server
 and use the CLI to check that every operation works.
 ```
 
-There's nothing DSQL-specific in that prompt beyond the word "DSQL". The skill
-supplies the rest. Here's the code it leads to, as it runs in the finished app
-at 35:00. First, the connection:
+I'm not going to submit that. I did it earlier, so you don't have to wait for
+it. There's nothing DSQL-specific in the prompt beyond the word "DSQL": the
+skill supplies the rest. Here's the code it led to, as it runs in the finished
+app at 35:00. First, the connection:
 
 ```ts demo/api/src/db.ts
 import { drizzle } from "@aws/aurora-dsql-drizzle";
@@ -390,9 +392,13 @@ conflict. Why a database would make you do that is step 7.
 <details>
 <summary>Presenter notes</summary>
 
-- F12 shows the prompt, then `db.ts`, then `queries.ts`: the real files, with
+- F12 opens a terminal beside psql, starts Claude Code, and types the prompt.
+  The next F12 closes it. Then `db.ts`, then `queries.ts`: the real files, with
   the lines above highlighted.
-- The prompt is shown, not run. In the first dry run Kiro took about 11
+- The prompt is never submitted: demo-it sends no Enter and no newline (the
+  paragraphs are typed as one). **Don't press Enter while Claude Code is on
+  screen**: it's in auto mode, so it would start building.
+- Kiro built the first version in rehearsal. In the first dry run Kiro took about 11
   minutes. Its first version used plain `drizzle-orm` with the connector and
   needed a nudge toward `@aws/aurora-dsql-drizzle`, and its CLI called the
   database directly (hence "calls it over HTTP" in the prompt).
@@ -442,11 +448,14 @@ SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
    Write: 0.00000 DPU
    Total: 120.76381 DPU
 ```
-<!-- stage: highlight dpu -->
 
-It read all 100,000 posts and sorted them to return 20. That's an ordinary
-PostgreSQL plan, but look at the bottom: **Statement DPU Estimate**. A DPU is
-what DSQL bills you for, so this plan tells you what the query *costs*, not
+<!-- stage: highlight scan -->
+It read all 100,000 posts.
+<!-- stage: highlight sort -->
+Then it sorted them, to return 20. That's an ordinary PostgreSQL plan.
+<!-- stage: highlight time dpu -->
+But look at the bottom: **Statement DPU Estimate**. A DPU is what DSQL bills
+you for, so this plan tells you what the query *costs*, not
 just how long it takes. This one costs about 121 DPU every time someone loads
 the home page. We'll fix it in step 6.
 
@@ -467,13 +476,14 @@ SELECT body, created_at FROM comments WHERE post_id = :'post_id' ORDER BY create
    Sort Key: comments.created_at
    ->  Index Only Scan using comments_pkey on public.comments  (... actual time=0.374..0.415 rows=14 loops=1)
          Index Cond: (comments.post_id = '00010fdc-b992-0173-c302-f62c7ee40d70'::uuid)
- Execution Time: 0.532 ms
-   Total: 0.02316 DPU
+ Execution Time: 0.714 ms
+   Total: 0.00724 DPU
 ```
-<!-- stage: highlight dpu -->
 
-**0.5 ms and 0.02 DPU, with no index added.** That's the primary key from
-step 1 paying off: the comments for this post are one contiguous range of
+<!-- stage: highlight time dpu -->
+**0.7 ms and under 0.01 DPU, with no index added.**
+<!-- stage: highlight scan cond -->
+That's the primary key from step 1 paying off: the comments for this post are one contiguous range of
 `comments_pkey`. For comparison, in rehearsal with comments keyed by
 `comment_id` alone, this same query was a full scan of all million comments:
 **1,031 ms and 191 DPU**.
@@ -510,8 +520,16 @@ CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');      -- about 25 s on 100k 
 > background job you can watch in `sys.jobs`. A big table gets a new index
 > with no lock and no maintenance window.
 
-Run the home page `EXPLAIN` again (↑ in psql), and it's **exactly the same
-plan**: a full scan plus a sort, about 208 ms. The planner ignored our index.
+Run the home page `EXPLAIN` again (Ctrl-R in psql):
+
+```sql recall: desc limit
+EXPLAIN ANALYZE VERBOSE
+SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
+```
+
+<!-- stage: highlight scan sort -->
+It's **exactly the same plan**: a full scan plus a sort, about 208 ms. The
+planner ignored our index.
 
 Here's why. Look at how DSQL stores a table:
 
@@ -539,23 +557,24 @@ CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
 CALL sys.wait_for_job('<job_id>');
 ```
 
-Then the home page query once more:
+Then the home page query once more (Ctrl-R again):
 
-```sql
+```sql recall: desc limit
 EXPLAIN ANALYZE VERBOSE
 SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
 ```
 ```
- Limit  (... actual time=0.654..0.691 rows=20 loops=1)
-   ->  Index Only Scan Backward using posts_recent_idx on public.posts
- Execution Time: 0.736 ms
-   Total: 0.04708 DPU
+ Limit  (... actual time=0.637..0.673 rows=20 loops=1)
+   ->  Index Only Scan Backward using posts_recent_idx on public.posts  (... actual time=0.635..0.670 rows=20 loops=1)
+ Execution Time: 0.751 ms
+   Total: 0.03857 DPU
 ```
-<!-- stage: highlight index -->
-<!-- stage: highlight dpu -->
 
-**208 ms to 0.7 ms**, and **121 DPU to 0.05**. It's an index-only scan, read backwards for the `DESC`,
-so there's no sort and no lookups.
+<!-- stage: highlight time dpu -->
+**208 ms to 0.7 ms**, and **121 DPU to 0.04**.
+<!-- stage: highlight scan -->
+It's an index-only scan, read backwards for the `DESC`: 20 rows read to return
+20, with no sort and no lookups.
 
 > **★ DSQL difference: covering indexes matter.** Every table is stored by
 > its primary key, so a secondary index that doesn't cover the query costs a
@@ -694,19 +713,31 @@ SELECT title, created_at FROM posts
 WHERE metadata->>'category' = 'databases'
 ORDER BY created_at DESC LIMIT 20;
 ```
-<!-- stage: highlight dpu -->
+```
+ Limit  (... actual time=231.026..231.031 rows=20 loops=1)
+   ->  Sort  (... rows=500 ...)
+         Sort Key: posts.created_at DESC
+         Sort Method: top-N heapsort  Memory: 28kB
+         ->  Index Only Scan using posts_pkey on public.posts  (... actual time=0.999..228.691 rows=12441 loops=1)
+               Filter: ((posts.metadata ->> 'category'::text) = 'databases'::text)
+               Rows Removed by Filter: 87560
+ Execution Time: 231.112 ms
+   Total: 120.79467 DPU
+```
 
-That's a full scan: 87,570 rows filtered out, about 235 ms and 121 DPU.
-PostgreSQL's answer is an index on the expression:
+<!-- stage: highlight filter -->
+That's a full scan: it read every post and threw 87,560 of them away.
+<!-- stage: highlight time dpu -->
+About 230 ms and 121 DPU. PostgreSQL's answer is an index on the expression:
 
 ```sql
 CREATE INDEX ASYNC posts_category_idx ON posts ((metadata->>'category'), created_at);
 CALL sys.wait_for_job('<job_id>');                     -- about 11 s
 ```
 
-The category query again (↑ in psql):
+The category query again (Ctrl-R):
 
-```sql
+```sql recall: = 'databases'
 EXPLAIN ANALYZE VERBOSE
 SELECT title, created_at FROM posts
 WHERE metadata->>'category' = 'databases'
@@ -719,16 +750,25 @@ ORDER BY created_at DESC LIMIT 20;
  Execution Time: 2.180 ms
    Total: 0.06800 DPU
 ```
-<!-- stage: highlight index -->
-<!-- stage: highlight dpu -->
 
-**235 ms to 2.2 ms.** One catch: the query has to use *exactly* the indexed
-expression. `->` returns JSON rather than text, so this version doesn't match
+<!-- stage: highlight scan cond -->
+An index scan on the expression: 20 rows read to return 20.
+<!-- stage: highlight time dpu -->
+**About 230 ms to 2 ms**, and 121 DPU to 0.07.
+
+One catch: the query has to use *exactly* the indexed expression. `->` returns JSON rather than text, so this version doesn't match
 the index and is a full scan again:
 
 ```sql
 EXPLAIN ANALYZE SELECT title FROM posts WHERE metadata->'category' = '"databases"' LIMIT 20;
 ```
+```
+ Limit  (... actual time=0.897..1.214 rows=20 loops=1)
+   ->  Index Only Scan using posts_pkey on posts  (... actual time=0.896..1.211 rows=20 loops=1)
+         Filter: ((metadata -> 'category'::text) = '"databases"'::jsonb)
+         Rows Removed by Filter: 131
+```
+<!-- stage: highlight scan filter -->
 
 And one boundary. "Posts with *any* tag `dsql`" works (`metadata->'tags' ? 'dsql'`),
 but it's always a full scan. In PostgreSQL you'd add a GIN index, and DSQL doesn't
@@ -769,11 +809,40 @@ for.
 
 ### Step 10 · Change data capture · 29:00–32:00
 
-Every committed change, streamed to Kinesis. First, start the viewer (it reads
-from the latest position, so it shows only new changes):
+Every committed change, streamed to Kinesis. First, a stream for it. It's
+on-demand, so there's nothing to size, with 10 MiB records, because CDC splits
+large rows into fragments of up to 10 MiB:
 
-```sh
-./events/target/release/events --stream <kinesis-stream> --table comments
+```sh pane events
+aws kinesis create-stream --stream-name dat401-cdc --stream-mode-details StreamMode=ON_DEMAND --max-record-size-in-ki-b 10240
+```
+
+It's active about five seconds later:
+
+```sh pane events
+aws kinesis describe-stream-summary --stream-name dat401-cdc
+```
+```text
+{
+    "StreamDescriptionSummary": {
+        "StreamName": "dat401-cdc",
+        "StreamARN": "arn:aws:kinesis:us-west-2:111122223333:stream/dat401-cdc",
+        "StreamStatus": "ACTIVE",
+        "StreamModeDetails": {
+            "StreamMode": "ON_DEMAND"
+        },
+        ...
+        "MaxRecordSizeInKiB": 10240
+    }
+}
+```
+
+<!-- stage: highlight StreamARN -->
+Start the viewer on it. It reads from the latest position, so it shows only
+new changes:
+
+```sh pane events
+./events/target/release/events --stream <kinesis-stream-arn> --table comments
 ```
 
 Then, in the console: the blog's cluster → create a CDC stream → target the Kinesis
@@ -809,26 +878,27 @@ The four lag columns break the trip down: commit → CDC → Kinesis → this la
 > workload.
 
 <details>
-<summary>Following along: create the stream yourself</summary>
+<summary>Following along: the CDC stream from the CLI</summary>
 
-The Kinesis stream must be **on-demand with 10 MiB records**. CDC splits large
-rows into fragments of up to 10 MiB.
-
-```sh
-aws kinesis create-stream --stream-name dat401-cdc \
-  --stream-mode-details StreamMode=ON_DEMAND --max-record-size-in-ki-b 10240
-```
-
-DSQL writes to it through a service role that trusts `dsql.amazonaws.com`. The
+DSQL writes to the Kinesis stream through a service role that trusts `dsql.amazonaws.com`. The
 console can create the role for you; the CLI steps are in
 [Getting started with CDC streams](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/cdc-setup.html).
 Then:
 
 ```sh
 aws dsql create-stream --cluster-identifier <cluster-id> \
-  --target-definition kinesis={streamArn=<stream-arn>,roleArn=<role-arn>} \
+  --target-definition kinesis={streamArn=<kinesis-stream-arn>,roleArn=<role-arn>} \
   --ordering UNORDERED --format JSON
 ```
+</details>
+
+<details>
+<summary>Presenter notes</summary>
+
+- `create-stream` fails if `dat401-cdc` already exists. Between rehearsals:
+  `aws kinesis delete-stream --stream-name dat401-cdc`.
+- The viewer's `--stream` takes the ARN, copied from the
+  `describe-stream-summary` output (highlighted first).
 </details>
 
 ### Step 11 · Multi-Region · 32:00–35:00

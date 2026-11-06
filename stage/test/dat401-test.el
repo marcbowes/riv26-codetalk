@@ -5,6 +5,11 @@
 (require 'ert)
 (require 'dat401-stage)
 
+;; These test the stage's logic on plain buffers, with the terminal's
+;; functions stubbed (vterm's names). The real terminal (ghostel by default)
+;; is exercised end to end by e2e.py.
+(setq dat401-terminal 'vterm)
+
 (ert-deftest dat401-delays-type-every-char ()
   (let* ((line "SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;")
          (ds (dat401--delays line)))
@@ -18,11 +23,12 @@
     (cons mean sd)))
 
 (ert-deftest dat401-delays-are-human-ish ()
-  ;; About 5-10 characters a second over a typical line: not a machine's 20+.
+  ;; About 7-12 characters a second over a typical line: a quick person, not
+  ;; a machine's 20+.
   (let* ((line "SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;")
          (all (cl-loop repeat 50 append (mapcar #'cdr (dat401--delays line))))
          (stats (dat401-test--stats all)))
-    (should (< 0.09 (car stats) 0.22))
+    (should (< 0.07 (car stats) 0.16))
     ;; Uneven: the spread between keys is as big as the average key.
     (should (> (/ (cdr stats) (car stats)) 0.7)))
   ;; Some lines are quicker than others.
@@ -181,15 +187,23 @@
             (should (null (marked)))))
       (kill-buffer buf))))
 
-(ert-deftest dat401-prompt-opens-like-a-file ()
-  (let ((dat401--vars (make-hash-table :test 'equal)))
-    (puthash "cluster-endpoint" "abc.dsql.us-west-2.on.aws" dat401--vars)
-    (dat401-prompt "Build an API. The cluster endpoint is <cluster-endpoint>.")
-    (should (equal (buffer-name (window-buffer)) "prompt.md"))
-    (with-current-buffer "prompt.md"
-      (should (null header-line-format))
-      (should (string-match-p "endpoint is abc.dsql.us-west-2.on.aws" (buffer-string)))
-      (should-not (string-match-p "AI prompt" (buffer-string))))))
+(ert-deftest dat401-agent-prompt-is-never-submitted ()
+  ;; Typed into the agent's frame with no Enter and no newline anywhere.
+  (let ((sent '()) (returns 0))
+    (cl-letf (((symbol-function 'dat401-open) #'ignore)
+              ((symbol-function 'dat401-unhighlight) #'ignore)
+              ((symbol-function 'dat401--pane-text) (lambda (_) "⏵⏵ auto mode on (shift+tab to cycle)"))
+              ((symbol-function 'dat401--sleep) #'ignore)
+              ((symbol-function 'dat401--send) (lambda (_p s &rest _) (push s sent)))
+              ((symbol-function 'dat401--pane) (lambda (_) (current-buffer)))
+              ((symbol-function 'vterm-send-return) (lambda () (cl-incf returns))))
+      (dat401-agent "In ./blog, build an API.\n\nOperations: ListPosts.\nStart the server."))
+    (let ((typed (apply #'concat (nreverse sent))))
+      ;; The only Enter is the one that starts the agent.
+      (should (= returns 1))
+      (should (string-prefix-p "claude" typed))
+      (should (string-suffix-p "In ./blog, build an API. Operations: ListPosts. Start the server." typed))
+      (should-not (string-match-p "[\n\r]" typed)))))
 
 (ert-deftest dat401-highlight-dpu-total ()
   (let ((dat401--marks nil)
@@ -255,10 +269,130 @@
                   "    \"arn\": \"arn:aws:dsql:us-west-2:1:cluster/e5ugy6wru5xgmpi4lx4e6sxs54\",\n"
                   "    \"endpoint\": \"e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws\"\n}\n❯ export PGHOST=")
           (let ((pos (dat401--find-on-screen buf "e5ugy6wru5xgmpi4lx4e6sxs54" "\"identifier\": \"")))
-            (goto-char pos)
+            (goto-char (car pos))
             (should (looking-back "\"identifier\": \"" (line-beginning-position)))))
       (kill-buffer buf))))
 
 (ert-deftest dat401-ids-are-never-typed ()
   (should (dat401--id-like-p "bk7zsxu5xjh6pgsaskjqxpb5ty"))
   (should-not (dat401--id-like-p "dat401-cdc")))
+
+(ert-deftest dat401-copy-into-copies-each-line-from-the-other-pane ()
+  (let* ((a (get-buffer-create "*psql A*"))
+         (b (get-buffer-create "*psql B*"))
+         (stmts '("select id as post_id from posts where slug = 'hello-dsql' \\gset"
+                  "select id as user_id from users where username = 'raluca' \\gset"))
+         (sent '()) (dat401--copies 0) (dat401--marks nil) (transient-mark-mode t))
+    (unwind-protect
+        (progn
+          (with-current-buffer a
+            ;; A is half width now: the first statement wrapped.
+            (insert "postgres=> select id as post_id from posts where slug\n = 'hello-dsql' \\gset\n"
+                    "postgres=> " (cadr stmts) "\npostgres=> "))
+          (switch-to-buffer a)
+          (cl-letf (((symbol-function 'dat401--show) #'ignore)
+                    ((symbol-function 'get-buffer-window) (lambda (&rest _) (selected-window)))
+                    ((symbol-function 'select-window) #'ignore)
+                    ((symbol-function 'vterm-copy-mode) #'ignore)
+                    ((symbol-function 'dat401--sleep) #'ignore)
+                    ((symbol-function 'dat401--wait-prompt) #'ignore)
+                    ((symbol-function 'dat401--send) (lambda (p s &rest _) (push (list p s) sent)))
+                    ((symbol-function 'vterm-send-return) (lambda () (push 'ret sent))))
+            (dat401-copy-into 'a 'b (mapconcat #'identity stmts "\n")))
+          ;; Both copied off A's screen (the wrapped one too) and pasted into B.
+          (should (= dat401--copies 2))
+          (should (equal (nreverse sent)
+                         (list (list 'b (car stmts)) 'ret (list 'b (cadr stmts)) 'ret))))
+      (kill-buffer a) (kill-buffer b))))
+
+(defconst dat401-test--plan
+  (concat
+   "postgres=> explain analyze verbose\n"
+   " Limit  (cost=22273.48..22273.53 rows=20 width=51) (actual time=231.026..231.031 rows=20 loops=1)\n"
+   "   ->  Sort  (cost=22273.48..22274.73 rows=500 width=51) (actual time=231.025..231.028 rows=20 loops=1)\n"
+   "         Sort Key: posts.created_at DESC\n"
+   "         Sort Method: top-N heapsort  Memory: 28kB\n"
+   "         ->  Index Only Scan using posts_pkey on public.posts  (cost=12600.17..22260.18 rows=500 "
+   "WRAP" "width=51) (actual time=0.999..228.691 rows=12441 loops=1)\n"
+   "               Filter: ((posts.metadata ->> 'category'::text) = 'databases'::text)\n"
+   "               Rows Removed by Filter: 87560\n"
+   " Execution Time: 231.112 ms\n"
+   " Statement DPU Estimate:\n   Total: 120.79467 DPU\n(21 rows)\n\npostgres=> ")
+  "A real plan (step 8, before the index). WRAP marks where the terminal wrapped.")
+
+(defun dat401-test--marked-in (buf)
+  (with-current-buffer buf
+    (sort (mapcar (lambda (o) (replace-regexp-in-string
+                               "\n" "" (buffer-substring-no-properties (overlay-start o) (overlay-end o))))
+                  dat401--mark-overlays)
+          #'string<)))
+
+(ert-deftest dat401-highlight-plan-parts ()
+  (let ((dat401--marks nil)
+        (buf (get-buffer-create "*psql A*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buf
+            (let ((parts (split-string dat401-test--plan "WRAP")))
+              (insert (car parts))
+              ;; The terminal wrapped the scan line: a newline vterm marks as a wrap.
+              (insert (propertize "\n" 'vterm-line-wrap t))
+              (insert (cadr parts)))
+            (setq dat401--this-pane 'a))
+          ;; The scan node and its actual rows, across the wrap.
+          (dat401-highlight 'a "scan")
+          (should (equal (dat401-test--marked-in buf) '("Index Only Scan using posts_pkey" "rows=12441")))
+          (dat401-unhighlight)
+          (dat401-highlight 'a "filter")
+          (should (equal (dat401-test--marked-in buf)
+                         '("Filter: ((posts.metadata ->> 'category'::text) = 'databases'::text)"
+                           "Rows Removed by Filter: 87560")))
+          (dat401-unhighlight)
+          (dat401-highlight 'a "sort")
+          (should (equal (dat401-test--marked-in buf)
+                         '("Sort Key: posts.created_at DESC" "Sort Method: top-N heapsort")))
+          (dat401-unhighlight)
+          ;; Several at once, as `highlight time dpu' does.
+          (dat401-highlight 'a "time" "dpu")
+          (should (equal (dat401-test--marked-in buf)
+                         '("Execution Time: 231.112 ms" "Total: 120.79467 DPU"))))
+      (kill-buffer buf))))
+
+(ert-deftest dat401-recall-uses-ctrl-r ()
+  (let ((keys '()) (screen "postgres=> ") (typed nil))
+    (cl-letf (((symbol-function 'dat401-unhighlight) #'ignore)
+              ((symbol-function 'dat401--start) #'ignore)
+              ((symbol-function 'select-window) #'ignore)
+              ((symbol-function 'get-buffer-window) #'ignore)
+              ((symbol-function 'dat401--pane) (lambda (_) (current-buffer)))
+              ((symbol-function 'dat401--sleep) #'ignore)
+              ((symbol-function 'dat401--wait-prompt) #'ignore)
+              ((symbol-function 'dat401--pane-text) (lambda (_) screen))
+              ((symbol-function 'vterm-send-key) (lambda (k &rest mods) (push (cons k (nth 2 mods)) keys)))
+              ((symbol-function 'dat401--send) (lambda (_p s &rest _) (push s keys)))
+              ((symbol-function 'vterm-send-return) (lambda () (push 'ret keys)))
+              ((symbol-function 'dat401--type) (lambda (_p text) (setq typed text))))
+      (dat401-recall 'a "explain analyze verbose\nselect 1 order by x desc limit 20;" "desc limit")
+      (setq keys (nreverse keys))
+      (should (equal (car keys) '("r" . t)))                       ; Ctrl-R
+      (should (equal (apply #'concat (cl-remove-if-not #'stringp keys)) "desc limit"))
+      (should (eq (car (last keys)) 'ret))
+      (should (null typed))
+      ;; If the search fails: Ctrl-G, then type it.
+      (setq keys '() screen "(failed reverse-i-search)`desc limit': ")
+      (dat401-recall 'a "explain analyze verbose\nselect 1;" "desc limit")
+      (should (member '("g" . t) keys))
+      (should-not (memq 'ret keys))
+      (should (equal typed "explain analyze verbose\nselect 1;")))))
+
+(ert-deftest dat401-e2e-script-reads ()
+  ;; A broken bracket in e2e.el fails silently in a terminal Emacs (it just
+  ;; sits on the dashboard), so make sure every form in it reads.
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name "stage/test/e2e.el" dat401-repo))
+    (goto-char (point-min))
+    (let ((n 0))
+      (condition-case nil
+          (while t (read (current-buffer)) (cl-incf n))
+        (end-of-file nil))
+      (should (> n 4)))))

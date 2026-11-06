@@ -3,27 +3,47 @@
 ;; Used by stage/test/e2e.py: DAT401_E2E_CLUSTER=<id> DAT401_E2E_STEPS=1-27
 ;; DAT401_E2E_OUT=<dir> emacs -nw --eval '(load ".../e2e.el")'
 
+(defun dat401-e2e--log (fmt &rest args)
+  "Append a line to log.txt in the output directory (where a stall shows)."
+  (when-let* ((out (getenv "DAT401_E2E_OUT")))
+    (write-region (concat (apply #'format fmt args) "\n") nil
+                  (expand-file-name "log.txt" out) t 'silent)))
+
+(dat401-e2e--log "e2e.el loading")
 (require 'dat401-stage)
+(dat401-e2e--log "dat401-stage loaded (terminal %s)" dat401-terminal)
 
 (defun dat401-e2e--wait-text (pane regexp timeout)
   (dat401--wait-for (lambda () (string-match-p regexp (dat401--pane-text pane))) timeout))
 
 (defun dat401-e2e ()
+  (dat401-e2e--log "timer fired")
   (load (expand-file-name "stage/dat401-talk.el" dat401-repo) nil t)
+  (dat401-e2e--log "talk loaded: %d steps" (length demo-it--steps))
   (let* ((spec (getenv "DAT401_E2E_STEPS"))
          (range (and spec (> (length spec) 0) (split-string spec "-")))
          (from (if range (string-to-number (car range)) 1))
-         ;; By default: the intro through step 6, wherever step 7 starts.
+         ;; By default: the intro through step 8 (JSONB), wherever step 10 starts.
          (to (if range (string-to-number (cadr range))
-               (1- (cdr (assoc "Step 7 · A race, and foreign keys" dat401--steps-index)))))
+               (1- (cdr (assoc "Step 10 · Change data capture" dat401--steps-index)))))
          (out (getenv "DAT401_E2E_OUT")))
-    (setq dat401-typing-speed 0.05)
+    (setq dat401-typing-speed 0.05
+          ;; No real agent in tests: `cat' shows what's typed, and would echo it
+          ;; back (a second copy) if an Enter were ever sent.
+          dat401-agent-command "cat"
+          dat401-agent-ready ".")
     (dat401-stage-mode 1)
+    (dat401-e2e--log "laying out pane A")
     (dat401-layout 'a)
+    (dat401-e2e--log "pane A up")
     (cl-loop for n from from to to do
              (let ((step (nth (1- n) demo-it--steps)))
                (with-temp-file (expand-file-name "progress.txt" out)
                  (insert (format "%d %S\n" n step)))
+               (when (and (string-match-p "dat401-quit-agent" (format "%S" step))
+                          (get-buffer (dat401--buffer-name 'claude)))
+                 (with-temp-file (expand-file-name "agent.txt" out)
+                   (insert (dat401--pane-text 'claude))))
                (demo-it--execute-step step)
                ;; What's highlighted in pane A after this step.
                (when (get-buffer (dat401--buffer-name 'a))
@@ -37,8 +57,10 @@
                (cond
                 ((string-match-p "05-load-sample-data" (format "%S" step))
                  (dat401-e2e--wait-text 'shell "Done in" 180))
-                ((get-buffer (dat401--buffer-name 'a))
-                 (dat401--wait-for (lambda () (dat401--at-prompt-p 'a)) 60)))
+                (t
+                 (dolist (p '(a b))
+                   (when (get-buffer (dat401--buffer-name p))
+                     (dat401--wait-for (lambda () (dat401--at-prompt-p p)) 60)))))
                (sit-for 0.5)))
     (dolist (p '(a b shell))
       (when (get-buffer (dat401--buffer-name p))

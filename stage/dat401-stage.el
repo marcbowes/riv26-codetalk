@@ -28,6 +28,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'demo-it)
+(require 'ghostel nil t)
 (require 'vterm nil t)
 
 (defgroup dat401 nil
@@ -40,14 +41,48 @@
   "The riv26-codetalk checkout; panes start here."
   :type 'directory)
 
+(defcustom dat401-terminal (if (featurep 'ghostel) 'ghostel 'vterm)
+  "The terminal the panes run in: `ghostel' (libghostty, Ghostty's VT engine)
+or `vterm' (libvterm)."
+  :type '(choice (const ghostel) (const vterm)))
+
 (defcustom dat401-aws-profile "bowes" "AWS_PROFILE for every pane." :type 'string)
 (defcustom dat401-aws-region "us-west-2" "AWS_REGION for every pane." :type 'string)
-(defcustom dat401-text-scale 2 "Text scale for panes and files." :type 'integer)
+(defcustom dat401-text-scale 2
+  "Text scale for files on screen. Terminal panes are never text-scaled: a
+scaled vterm can be told the wrong size, which mangles full-screen programs
+(the load generator) and can crash Emacs on resize. They get big through
+`dat401-big-font' instead."
+  :type 'integer)
+
+(defcustom dat401-big-font t
+  "Make the whole frame's font big while the demo runs (Doom's
+`doom-big-font-mode', or the default face scaled by 1.5)."
+  :type 'boolean)
+
+(defvar dat401--saved-height nil "The default face height before the demo, if we changed it.")
+
+(defun dat401--big-font (on)
+  (when dat401-big-font
+    (cond
+     ((fboundp 'doom-big-font-mode) (doom-big-font-mode (if on 1 -1)))
+     (on (setq dat401--saved-height (face-attribute 'default :height))
+         (set-face-attribute 'default nil :height (round (* 1.5 dat401--saved-height))))
+     (dat401--saved-height (set-face-attribute 'default nil :height dat401--saved-height)
+                           (setq dat401--saved-height nil)))))
 
 (defcustom dat401-typing-speed 1.0
-  "Multiplier on typing delays: 1.0 is a person at a keyboard (about 7
-characters a second, unevenly), 0.5 twice as fast, 0 instant."
+  "Multiplier on typing delays: 1.0 is a quick typist (about 90-100 words a
+minute over a line, unevenly), 0.5 twice as fast, 0 instant."
   :type 'number)
+
+(defcustom dat401-agent-command "claude"
+  "What step 4 types to start the AI agent in its frame."
+  :type 'string)
+
+(defcustom dat401-agent-ready "shift\\+tab to cycle\\|for shortcuts"
+  "Seen in the agent's frame once it's ready for a prompt."
+  :type 'regexp)
 
 (defcustom dat401-wait-timeout 180
   "Seconds to wait for psql to come back before typing the next statement."
@@ -57,13 +92,77 @@ characters a second, unevenly), 0.5 twice as fast, 0 instant."
   "Placeholder values, e.g. \"cluster-endpoint\".")
 
 (defvar dat401--section "" "The current talk step (for `dat401-goto').")
+(defvar dat401--hurry nil "Non-nil: finish the current command instantly.")
 (defvar dat401--layout nil "The panes on screen, e.g. (a b), or (view) for a file.")
 (defvar dat401--steps-index nil "Alist of (TITLE . demo-it step number), from dat401-talk.el.")
+
+;;;; Terminal backend (ghostel or vterm)
+
+(declare-function ghostel-create "ghostel" (&optional name display identity))
+(declare-function ghostel-send-string "ghostel" (string))
+(declare-function ghostel-paste-string "ghostel" (string))
+(declare-function ghostel-send-key "ghostel" (key-name &optional mods))
+(declare-function ghostel-clear "ghostel" ())
+(declare-function ghostel-copy-mode "ghostel" (&optional sticky))
+(declare-function ghostel-readonly-exit "ghostel" ())
+(declare-function vterm "vterm" (&optional arg))
+(declare-function vterm-send-string "vterm" (string &optional paste-p))
+(declare-function vterm-send-return "vterm" ())
+(declare-function vterm-send-key "vterm" (key &optional shift meta ctrl accept-proc-output))
+(declare-function vterm-clear "vterm" (&optional arg))
+(declare-function vterm-copy-mode "vterm" (&optional arg))
+
+(defun dat401--ghostel-p () (eq dat401-terminal 'ghostel))
+
+(defun dat401--term-new (name)
+  "A new terminal buffer called NAME running the shell, not yet displayed."
+  (if (dat401--ghostel-p)
+      (ghostel-create name)
+    (save-window-excursion (vterm name))))
+
+(defun dat401--term-send (string &optional paste)
+  "Send STRING to the current buffer's terminal; PASTE: as a bracketed paste."
+  (if (dat401--ghostel-p)
+      (if paste (ghostel-paste-string string) (ghostel-send-string string))
+    (vterm-send-string string paste)))
+
+(defun dat401--term-return ()
+  (if (dat401--ghostel-p) (ghostel-send-key "return") (vterm-send-return)))
+
+(defun dat401--term-ctrl (key)
+  "Send Ctrl-KEY (a one-letter string)."
+  (if (dat401--ghostel-p) (ghostel-send-key key "ctrl") (vterm-send-key key nil nil t)))
+
+(defun dat401--term-clear ()
+  (if (dat401--ghostel-p) (ghostel-clear) (vterm-clear)))
+
+(defun dat401--term-copy-mode (on)
+  "Enter (ON) or leave the terminal's copy mode, without a word in the echo
+area: the audience shouldn't see \"Copy mode\" go by."
+  (let ((inhibit-message t))
+    (if (dat401--ghostel-p)
+        (if on
+            (unless (eq (bound-and-true-p ghostel--input-mode) 'copy) (ghostel-copy-mode))
+          (when (eq (bound-and-true-p ghostel--input-mode) 'copy) (ghostel-readonly-exit)))
+      (vterm-copy-mode (if on 1 -1)))))
+
+(defun dat401--wrap-property ()
+  "The text property the terminal puts on newlines it added to wrap a line."
+  (if (dat401--ghostel-p) 'ghostel-wrap 'vterm-line-wrap))
+
+(defun dat401--kill-terminal (buf)
+  "Kill terminal buffer BUF and its shell, without asking."
+  (when (buffer-live-p buf)
+    (when-let* ((proc (get-buffer-process buf)))
+      (set-process-query-on-exit-flag proc nil))
+    (let ((kill-buffer-query-functions nil))
+      (kill-buffer buf))))
 
 ;;;; Panes
 
 (defconst dat401--pane-titles
-  '((a . "psql A") (b . "psql B") (shell . "shell") (events . "events") (load . "load")))
+  '((a . "psql A") (b . "psql B") (shell . "shell") (events . "events") (load . "load")
+    (claude . "claude")))
 
 (defun dat401--buffer-name (pane)
   (format "*%s*" (alist-get pane dat401--pane-titles)))
@@ -81,7 +180,9 @@ AWS settings always; psql settings once the cluster's endpoint is known."
    (when-let* ((endpoint (gethash "cluster-endpoint" dat401--vars)))
      (list (concat "PGHOST=" endpoint)
            "PGUSER=admin" "PGDATABASE=postgres" "PGSSLMODE=require"))
-   process-environment))
+   ;; Not "inside" another Claude Code session, even if Emacs was started from one.
+   (cl-remove-if (lambda (e) (string-match-p "\\`CLAUDE\\(CODE\\|_CODE_ENTRYPOINT\\)=" e))
+                 process-environment)))
 
 (defvar-local dat401--this-pane nil "Which pane this buffer is.")
 (defvar-local dat401--fresh nil "Non-nil until a new pane's shell has drawn its first prompt.")
@@ -92,20 +193,20 @@ AWS settings always; psql settings once the cluster's endpoint is known."
     (or (get-buffer name)
         (let ((default-directory (file-name-as-directory dat401-repo))
               (process-environment (dat401--env)))
-          (save-window-excursion
-            (let ((buf (vterm name)))
-              (with-current-buffer buf
-                (setq dat401--this-pane pane
-                      dat401--fresh t)
-                (setq-local header-line-format nil)
-                (text-scale-set dat401-text-scale))
-              buf))))))
+          (let ((buf (dat401--term-new name)))
+            (with-current-buffer buf
+              (setq dat401--this-pane pane
+                    dat401--fresh t)
+              ;; Nothing but the terminal: no header, no mode line naming the pane.
+              (setq-local header-line-format nil mode-line-format nil))
+            buf)))))
 
 ;;;; Layout
 
 (defun dat401--normalize (panes)
   (cond ((memq 'load panes) '(load))
         ((memq 'b panes) '(a b))
+        ((memq 'claude panes) '(a claude))
         ((memq 'events panes) '(a events))
         ((memq 'shell panes) '(a shell))
         (t '(a))))
@@ -117,6 +218,7 @@ AWS settings always; psql settings once the cluster's endpoint is known."
     (switch-to-buffer (dat401--pane (car panes)))
     (pcase panes
       (`(a b) (set-window-buffer (split-window-right) (dat401--pane 'b)))
+      (`(a claude) (set-window-buffer (split-window-right) (dat401--pane 'claude)))
       (`(a events) (set-window-buffer (split-window-right) (dat401--pane 'events)))
       (`(a shell) (set-window-buffer (split-window-below (- (floor (window-total-height) 3)))
                                      (dat401--pane 'shell))))
@@ -137,7 +239,7 @@ the shell's redraw leaves stray lines. Panes with history are left alone."
       (dolist (p fresh)
         (with-current-buffer (dat401--pane p)
           (setq dat401--fresh nil)
-          (vterm-clear)))
+          (dat401--term-clear)))
       (sit-for 0.2))))
 
 (defun dat401--show (pane)
@@ -230,16 +332,32 @@ lines are highlighted; the lines between them are dimmed."
        (setq-local display-line-numbers-widen t)
        (display-line-numbers-mode 1)))))
 
-(defun dat401-prompt (text)
-  "Open an AI prompt full screen, as if it were a file (prompt.md)."
-  (let ((text (dat401--resolve-static text)))
-    (dat401--view
-     "prompt.md"
-     (lambda ()
-       (insert text "\n")
-       (dat401--mode-for "prompt.md")
-       (setq-local word-wrap t truncate-lines nil)
-       (visual-line-mode 1)))))
+;;;; The AI agent (step 4)
+
+(defun dat401-agent (text)
+  "Open a terminal beside pane A, start the agent (Claude Code) in it, and
+type TEXT into its prompt. It's never submitted: no Enter and no newline is
+ever sent (paragraphs are typed as one), and `dat401-quit-agent' closes it."
+  (dat401-unhighlight)
+  (setq dat401--hurry nil)
+  (dat401-open 'claude)
+  (dat401--type-line 'claude dat401-agent-command)
+  (dat401--wait-for (lambda () (string-match-p dat401-agent-ready (dat401--pane-text 'claude))) 30)
+  (setq dat401--hurry nil)
+  (dat401--sleep (dat401--pause 1500 0.3))
+  (let ((text (replace-regexp-in-string "[ \t]*\n[ \t\n]*" " " (string-trim text))))
+    (dolist (cd (dat401--delays text))
+      (dat401--send 'claude (car cd))
+      (dat401--sleep (cdr cd))))
+  (setq dat401--hurry nil))
+
+(defun dat401-quit-agent ()
+  "Close the agent's frame without submitting anything: the window goes, and
+the agent with it."
+  (when-let* ((buf (get-buffer (dat401--buffer-name 'claude))))
+    (when (memq 'claude dat401--layout)
+      (apply #'dat401-layout (or (remq 'claude dat401--layout) '(a))))
+    (dat401--kill-terminal buf)))
 
 ;;;; Placeholders
 
@@ -289,9 +407,25 @@ lines are highlighted; the lines between them are dimmed."
                                              dat401--stale-endpoints :test #'equal)))))
            '(a b shell)))
 
+(defconst dat401--scraped
+  '(("kinesis-stream-arn" . "\"StreamARN\": \"\\([^\"\n]+\\)\""))
+  "Placeholders read from the latest output in the pane being typed into.")
+
+(defun dat401--last-match (regexp text)
+  "Group 1 of the last match of REGEXP in TEXT."
+  (let ((pos 0) found)
+    (while (string-match regexp text pos)
+      (setq found (match-string 1 text) pos (match-end 0)))
+    found))
+
 (defun dat401--value (name pane)
   "Value for <NAME>, typing into PANE."
   (cond
+   ((assoc name dat401--scraped)
+    (or (dat401--wait-for (lambda () (dat401--last-match (cdr (assoc name dat401--scraped))
+                                                         (dat401--pane-text pane)))
+                          15)
+        (string-trim (read-string (format "%s: " name)))))
    ((equal name "job_id")
     (or (dat401--wait-for (lambda () (dat401--last-job-id (dat401--pane-text pane))) 30)
         (read-string "job_id: ")))
@@ -331,46 +465,93 @@ match of REGEXP in PANE, and is re-applied whenever the terminal redraws.")
 
 (defvar-local dat401--mark-overlays nil)
 
+(defconst dat401--mark-window 40000
+  "Highlights are looked for in this many characters at the end of a pane.")
+
+(defun dat401--unwrapped (beg end)
+  "The text from BEG to END without the newlines the terminal added to wrap
+long lines, and those newlines' positions (ascending)."
+  (let ((wraps '()) (pos beg))
+    (while (setq pos (text-property-any pos end (dat401--wrap-property) t))
+      (push pos wraps)
+      (setq pos (1+ pos)))
+    (setq wraps (nreverse wraps))
+    (let ((text (buffer-substring-no-properties beg end)))
+      (dolist (w (reverse wraps))
+        (setq text (concat (substring text 0 (- w beg)) (substring text (1+ (- w beg))))))
+      (cons text wraps))))
+
+(defun dat401--to-pos (beg wraps i)
+  "Buffer position of index I in the unwrapped text that starts at BEG."
+  (let ((pos (+ beg i)))
+    (dolist (w wraps pos)
+      (when (<= w pos) (setq pos (1+ pos))))))
+
 (defun dat401--apply-marks (pane)
-  "(Re)draw the highlights in PANE."
+  "(Re)draw the highlights in PANE: every group of the last match of each
+mark's regexp, matched as if the terminal hadn't wrapped long lines."
   (when-let* ((buf (get-buffer (dat401--buffer-name pane))))
     (with-current-buffer buf
       (mapc #'delete-overlay dat401--mark-overlays)
       (setq dat401--mark-overlays nil)
-      (save-excursion
-        (save-match-data
+      (save-match-data
+        (let* ((beg (max (point-min) (- (point-max) dat401--mark-window)))
+               (u (dat401--unwrapped beg (point-max)))
+               (text (car u)) (wraps (cdr u)))
           (dolist (m dat401--marks)
             (when (eq (car m) pane)
-              (goto-char (point-max))
-              (when (re-search-backward (cadr m) nil t)
-                (let ((ov (make-overlay (match-beginning 1) (match-end 1))))
-                  (overlay-put ov 'face 'dat401-mark)
-                  (overlay-put ov 'priority 100)
-                  (push ov dat401--mark-overlays))))))))))
+              (let ((pos 0) last)
+                (while (string-match (cadr m) text pos)
+                  (setq last (match-data) pos (max (1+ (match-beginning 0)) (match-end 0))))
+                (when last
+                  (set-match-data last)
+                  (cl-loop for g from 1 while (match-beginning g)
+                           do (let ((ov (make-overlay (dat401--to-pos beg wraps (match-beginning g))
+                                                      (dat401--to-pos beg wraps (match-end g)))))
+                                (overlay-put ov 'face 'dat401-mark)
+                                (overlay-put ov 'priority 100)
+                                (push ov dat401--mark-overlays))))))))))))
 
 (defun dat401--after-redraw (&rest _)
-  "vterm redraws by replacing lines, which takes overlays with them."
+  "Terminals redraw by replacing lines, which takes overlays with them."
   (when (and dat401--marks dat401--this-pane)
     (dat401--apply-marks dat401--this-pane)))
 
+(defun dat401--after-ghostel-redraw (buffer &rest _)
+  (when (and dat401--marks (buffer-live-p buffer))
+    (with-current-buffer buffer (dat401--after-redraw))))
+
 (with-eval-after-load 'vterm
   (advice-add 'vterm--redraw :after #'dat401--after-redraw))
+(with-eval-after-load 'ghostel
+  (advice-add 'ghostel--redraw-now :after #'dat401--after-ghostel-redraw))
 
 (defun dat401--mark (pane regexp)
   (push (list pane regexp) dat401--marks)
   (dat401--apply-marks pane))
 
-(defconst dat401--named-marks
-  '(("dpu" . "\\(Total: [0-9.]+ DPU\\)")
-    ("index" . "\\(Index\\(?: Only\\)? Scan\\(?: Backward\\)? using [a-z0-9_]+\\)"))
-  "Things to highlight by name. Anything else is a JSON field.")
+(defconst dat401--scan-regexp
+  (concat "\\(\\(?:Index\\(?: Only\\)? \\|Seq \\)Scan\\(?: Backward\\)? using [a-z0-9_]+\\)"
+          "[^\n]*(actual time=[0-9.]+ \\(rows=[0-9]+\\)")
+  "A plan's scan node and the rows it actually read.")
 
-(defun dat401-highlight (pane what)
-  "Highlight WHAT in PANE's latest output: an EXPLAIN's DPU total (\"dpu\")
-or the index scan in its plan (\"index\"), or the value of a JSON field
-\(\"identifier\")."
-  (dat401--mark pane (or (cdr (assoc what dat401--named-marks))
-                         (format "\"%s\": \"\\([^\"\n]+\\)\"" (regexp-quote what)))))
+(defconst dat401--named-marks
+  `(("scan" . ,dat401--scan-regexp)
+    ("index" . ,dat401--scan-regexp)
+    ("sort" . "\\(Sort Key: [^\n]+\\)\n *\\(Sort Method: [^\n]*?\\)  ")
+    ("filter" . "\\(Filter: [^\n]+\\)\n *\\(Rows Removed by Filter: [0-9]+\\)")
+    ("cond" . "\\(Index Cond: [^\n]+\\)")
+    ("time" . "\\(Execution Time: [0-9.]+ ms\\)")
+    ("dpu" . "\\(Total: [0-9.]+ DPU\\)"))
+  "Parts of an EXPLAIN ANALYZE plan to highlight by name. Anything else is a
+JSON field.")
+
+(defun dat401-highlight (pane &rest whats)
+  "Highlight WHATS in PANE's latest output: parts of an EXPLAIN plan (scan,
+sort, filter, cond, time, dpu), or the values of JSON fields (identifier)."
+  (dolist (what whats)
+    (dat401--mark pane (or (cdr (assoc what dat401--named-marks))
+                           (format "\"%s\": \"\\([^\"\n]+\\)\"" (regexp-quote what))))))
 
 (defun dat401-unhighlight ()
   "Clear every highlight."
@@ -409,13 +590,13 @@ now and then there's a pause to think before a word, or a hiccup mid-word."
     (dolist (ch (string-to-list line))
       (when (or (null prev) (memq prev '(?\s ?\( ?. ?, ?= ?\;)))
         (setq burst (< (random 100) 20)))
-      (let ((ms (if burst (dat401--jitter 55 0.25) (dat401--jitter 95 0.4))))
+      (let ((ms (if burst (dat401--jitter 45 0.25) (dat401--jitter 78 0.4))))
         (when (eq prev ?\s)
-          (cl-incf ms (dat401--jitter 150 0.45))
+          (cl-incf ms (dat401--jitter 125 0.45))
           (when (< (random 100) 8)                       ; thinking about the next word
-            (cl-incf ms (dat401--jitter 700 0.45))))
+            (cl-incf ms (dat401--jitter 650 0.45))))
         (when (memq prev '(?, ?\; ?\( ?\) ?. ?= ?:))
-          (cl-incf ms (dat401--jitter 160 0.5)))
+          (cl-incf ms (dat401--jitter 135 0.5)))
         (when (or (memq ch dat401--shifted)              ; Shift, or a reach
                   (and (<= ?A ch ?Z) (not (and prev (<= ?A prev ?Z)))))
           (cl-incf ms (dat401--jitter 60 0.4)))
@@ -425,7 +606,6 @@ now and then there's a pause to think before a word, or a hiccup mid-word."
         (setq prev ch)))
     (nreverse out)))
 
-(defvar dat401--hurry nil "Non-nil: finish the current command instantly.")
 
 (defun dat401--sleep (secs)
   "Wait SECS, redisplaying. A key press sets `dat401--hurry' (and is swallowed)."
@@ -458,7 +638,7 @@ now and then there's a pause to think before a word, or a hiccup mid-word."
     (string-match-p "[$%❯]\\'" tail)))
 
 (defun dat401--send (pane string &optional paste)
-  (with-current-buffer (dat401--pane pane) (vterm-send-string string paste)))
+  (with-current-buffer (dat401--pane pane) (dat401--term-send string paste)))
 
 (defun dat401--paste-value (pane before value)
   "Paste VALUE into PANE. While highlights are on, highlight it too (found by
@@ -473,7 +653,8 @@ BEFORE, the text typed ahead of it on this line)."
 
 (defconst dat401--copy-context
   '(("cluster-id" . "\"identifier\": \"")
-    ("cluster-endpoint" . "\"endpoint\": \""))
+    ("cluster-endpoint" . "\"endpoint\": \"")
+    ("kinesis-stream-arn" . "\"StreamARN\": \""))
   "Where on screen a value is copied from: the text just before it. A value
 with no entry is copied from wherever it last appears.")
 
@@ -483,15 +664,22 @@ with no entry is copied from wherever it last appears.")
   "Is VALUE something nobody types by hand (a job id, a cluster id)?"
   (string-match-p "\\`[a-z0-9]\\{20,\\}\\'" value))
 
+(defun dat401--wrap-tolerant (s)
+  "A regexp for S that still matches where the terminal wrapped it."
+  (mapconcat (lambda (c) (regexp-quote (char-to-string c))) s "\n?"))
+
 (defun dat401--find-on-screen (buf value context)
-  "Start of VALUE in BUF's output above the current input line, or nil."
+  "(START . END) of the last VALUE in BUF's output above the current input
+line (after CONTEXT, if given), or nil."
   (with-current-buffer buf
     (save-excursion
       (goto-char (point-max))
       (skip-chars-backward " \t\n")
       (forward-line 0)
-      (when (search-backward (concat (or context "") value) nil t)
-        (+ (point) (length (or context "")))))))
+      (when (re-search-backward (concat (regexp-quote (or context ""))
+                                        "\\(" (dat401--wrap-tolerant value) "\\)")
+                                nil t)
+        (cons (match-beginning 1) (match-end 1))))))
 
 (defun dat401--word-starts (from to)
   "Where `w' (forward to word start) would stop between FROM and TO."
@@ -510,13 +698,14 @@ to the prompt. Nothing touches the clipboard: the caller pastes VALUE from a
 variable. Returns non-nil if VALUE was on screen to copy."
   (let* ((buf (dat401--pane pane))
          (win (get-buffer-window buf))
-         (start (and win (not dat401--hurry) (dat401--find-on-screen buf value context))))
-    (when start
+         (found (and win (not dat401--hurry) (dat401--find-on-screen buf value context)))
+         (start (car found)))
+    (when found
       (cl-incf dat401--copies)
       (with-selected-window win
         (with-current-buffer buf
           (dat401--sleep (dat401--pause 400 0.3))
-          (vterm-copy-mode 1)
+          (dat401--term-copy-mode t)
           (unwind-protect
               (let ((target (line-number-at-pos start)) (taps 0))
                 (dat401--sleep (dat401--pause 250 0.3))
@@ -533,10 +722,10 @@ variable. Returns non-nil if VALUE was on screen to copy."
                 (goto-char start)
                 (push-mark start t t)
                 (dat401--sleep (dat401--pause 280 0.3))
-                (goto-char (+ start (length value)))
+                (goto-char (cdr found))
                 (dat401--sleep (dat401--pause 550 0.3))
                 (deactivate-mark))
-            (vterm-copy-mode -1))))
+            (dat401--term-copy-mode nil))))
       (dat401--sleep (dat401--pause 300 0.3))
       t)))
 
@@ -557,7 +746,7 @@ copied from the screen if it's there, pasted if it's an id, otherwise typed."
 (defun dat401--type-line (pane line)
   "Type LINE into PANE like a person, copying in its placeholders, then Enter."
   (let ((typed ""))
-    (dat401--sleep (dat401--pause 550 0.35))
+    (dat401--sleep (dat401--pause 420 0.35))
     (dolist (seg (dat401--segments line))
       (if (cdr seg)
           (let ((v (dat401--value (car seg) pane)))
@@ -567,8 +756,8 @@ copied from the screen if it's there, pasted if it's an id, otherwise typed."
           (dat401--send pane (car cd))
           (dat401--sleep (cdr cd)))
         (setq typed (concat typed (car seg)))))
-    (dat401--sleep (dat401--pause 380 0.4))
-    (with-current-buffer (dat401--pane pane) (vterm-send-return))))
+    (dat401--sleep (dat401--pause 300 0.4))
+    (with-current-buffer (dat401--pane pane) (dat401--term-return))))
 
 (defun dat401--statement-end-p (line)
   "Does LINE finish something psql will run (a ;, or a backslash command)?"
@@ -620,6 +809,53 @@ pastes the highlighted identifier, and it's highlighted too)."
       (dat401--type p text)
       (setq dat401--hurry nil))))
 
+(defun dat401-recall (pane text search)
+  "Run TEXT again in PANE from psql's history, as you would: Ctrl-R, a few
+characters of it (SEARCH), a look at what it found, Enter. If the search
+fails, it's abandoned (Ctrl-G) and TEXT is typed instead."
+  (dat401-unhighlight)
+  (dat401--start (list pane))
+  (select-window (get-buffer-window (dat401--pane pane)))
+  (let ((buf (dat401--pane pane)))
+    (dat401--sleep (dat401--pause 600 0.3))
+    (with-current-buffer buf (dat401--term-ctrl "r"))
+    (dat401--sleep (dat401--pause 400 0.3))
+    (dolist (cd (dat401--delays search))
+      (dat401--send pane (car cd))
+      (dat401--sleep (cdr cd)))
+    (dat401--sleep (dat401--pause 800 0.3))
+    (let ((tail (dat401--pane-text pane)))
+      (if (string-match-p "failed reverse-i-search" (substring tail (max 0 (- (length tail) 400))))
+          (progn
+            (with-current-buffer buf (dat401--term-ctrl "g"))
+            (dat401--sleep 0.3)
+            (dat401--type pane text))
+        (with-current-buffer buf (dat401--term-return))
+        (dat401--wait-prompt pane))))
+  (setq dat401--hurry nil))
+
+(defun dat401-copy-into (from to text)
+  "Run TEXT in pane TO the way you would right after running it in FROM: put
+TO on screen, then, for each line, copy it from FROM's screen (copy mode: up
+to it, select it, copy), paste it into TO, and Enter. A line that isn't on
+FROM's screen is typed."
+  (unless (dat401--placeholders text)
+    (dat401-unhighlight))
+  (setq dat401--hurry nil)
+  (dat401--show to)
+  (dolist (line (split-string text "\n" t))
+    (let ((copied (dat401--copy-from-screen from line)))
+      (select-window (get-buffer-window (dat401--pane to)))
+      (if (not copied)
+          (dat401--type-line to line)
+        (dat401--sleep (dat401--pause 300 0.3))
+        (dat401--send to line)
+        (dat401--sleep (dat401--pause 450 0.35))
+        (with-current-buffer (dat401--pane to) (dat401--term-return)))
+      (when (dat401--statement-end-p line)
+        (dat401--wait-prompt to))))
+  (setq dat401--hurry nil))
+
 (defun dat401-paste (pane text)
   "Paste TEXT (placeholders filled in) into PANE in one go, then Enter, the
 way you'd paste a block of exports. At a shell prompt it's a bracketed
@@ -632,7 +868,7 @@ paste, so the shell shows it as pasted and runs it on Enter."
         (dat401--send pane text t)
       (dat401--send pane text))
     (dat401--sleep (dat401--pause 500 0.3))
-    (with-current-buffer (dat401--pane pane) (vterm-send-return))
+    (with-current-buffer (dat401--pane pane) (dat401--term-return))
     (dat401--wait-prompt pane)))
 
 ;;;; Starting, jumping, keys
@@ -665,6 +901,7 @@ paste, so the shell shows it as pasted and runs it on Enter."
   (interactive)
   (load (expand-file-name "stage/dat401-talk.el" dat401-repo) nil t)
   (dat401-stage-mode 1)
+  (dat401--big-font t)
   (setq demo-it--start-single-window nil)
   (dat401-layout 'a)
   (demo-it-start nil t)
@@ -674,6 +911,7 @@ paste, so the shell shows it as pasted and runs it on Enter."
   "Leave the demo (panes stay)."
   (interactive)
   (dat401-stage-mode -1)
+  (dat401--big-font nil)
   (demo-it-disable-mode))
 
 (defun dat401-reset ()
@@ -683,10 +921,7 @@ clean."
   (interactive)
   (ignore-errors (dat401-stop))
   (dolist (name (mapcar (lambda (p) (dat401--buffer-name (car p))) dat401--pane-titles))
-    (when-let* ((buf (get-buffer name)))
-      (when-let* ((proc (get-buffer-process buf)))
-        (set-process-query-on-exit-flag proc nil))
-      (kill-buffer buf)))
+    (dat401--kill-terminal (get-buffer name)))
   (mapc (lambda (b) (when (buffer-live-p b) (kill-buffer b))) dat401--views)
   (clrhash dat401--vars)
   (setq dat401--views nil dat401--marks nil dat401--layout nil dat401--section ""

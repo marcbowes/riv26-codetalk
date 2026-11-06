@@ -5,10 +5,11 @@ against a real cluster, then check what the panes show.
     AWS_PROFILE=bowes python3 stage/test/e2e.py [FROM-TO]
 
 Uses your normal Emacs config (Doom), so vterm and demo-it come from there.
-By default it runs the talk from the intro through step 6: creating the
+By default it runs the talk from the intro through step 7: creating the
 cluster (its endpoint read from the output), the schema, the step 4 code
-views, the loader, EXPLAIN, and both async indexes (with <job_id> read from
-the output). Afterwards it deletes the cluster step 1 created.
+views, the loader, EXPLAIN, both async indexes (with <job_id> copied from
+the output), the foreign key race in two panes, and step 8's JSONB index,
+with every EXPLAIN highlight and Ctrl-R re-run. Afterwards it deletes the cluster step 1 created.
 """
 import fcntl
 import json
@@ -41,11 +42,12 @@ def run(steps, timeout=900):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
     deadline = time.time() + timeout
     status = None
+    screen = b""
     while time.time() < deadline:
         r, _, _ = select.select([fd], [], [], 0.5)
         if r:
             try:
-                os.read(fd, 65536)
+                screen = (screen + os.read(fd, 65536))[-20000:]
             except OSError:
                 pass
         done, st = os.waitpid(pid, os.WNOHANG)
@@ -55,6 +57,10 @@ def run(steps, timeout=900):
     if status is None:
         os.kill(pid, 9)
         os.waitpid(pid, 0)
+    # What Emacs last drew (escape codes stripped): shows a stuck prompt.
+    text = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-B]|\x1b[=>]", b"", screen)
+    with open(os.path.join(out, "screen.txt"), "wb") as f:
+        f.write(text)
     return out, status
 
 
@@ -100,13 +106,27 @@ def main():
         ("DPU totals highlighted", sum(1 for m in marks if "DPU" in m) >= 3),
         ("index highlighted after adding it", any("Index Only Scan Backward using posts_recent_idx" in m
                                                   for m in marks)),
-        ("ids copied from the screen, not typed (cluster id + 2 job ids)",
-         int(read(out, "copies.txt").strip() or 0) >= 3),
+        ("ids and B's statements copied from the screen, not typed",
+         int(read(out, "copies.txt").strip() or 0) >= 9),
+        ("step 7: B's lookups copied in from A", b.count("select id as post_id from posts where slug = 'hello-dsql'") >= 2),
+        ("step 7: race 1 leaves orphans; validation fails", "violates foreign key constraint" in a),
+        ("step 7: race 2 ends in OC000", "OC000" in b),
+        ("re-runs come from history (Ctrl-R), 3 of them",
+         a.count("reverse-i-search") >= 3 and "failed reverse-i-search" not in a),
+        ("step 6: the ignored index (same plan, re-run)",
+         a.count("Index Only Scan using posts_pkey on public.posts") >= 2),
+        ("step 8: filter, then the expression index",
+         "Rows Removed by Filter" in a and "Index Scan Backward using posts_category_idx" in a),
+        ("plan highlights: scan, sort, filter, cond, time",
+         all(any(k in m for m in marks) for k in ("Scan using", "Sort Method", "Rows Removed", "Index Cond",
+                                                   "Execution Time"))),
         ("pane B: exports pasted, then psql", "export PGPASSWORD" in b and "\n❯ psql" in b),
         ("DDL typed without indentation, in lower case", "(> id uuid primary key" in a),
         ("step 2: comment inserted via :'post_id'", "values (:'post_id', 'First!');\nINSERT 0 1" in a),
         ("tables created", a.count("CREATE TABLE") >= 3),
         ("step 4 code shown", "db.transactionWithRetry(" in read(out, "code.txt")),
+        ("step 4 prompt typed into the agent, never submitted",
+         read(out, "agent.txt").count("build a TypeScript API for my blog") == 1),
         ("real schema loaded with \\i", "INSERT 0 1" in a),
         ("loader ran in the shell pane", "Done in" in shell),
         ("bad plan shown (full scan + sort)", "top-N heapsort" in a),
@@ -122,6 +142,7 @@ def main():
         print("  %-*s  %s" % (width, name, "ok" if passed else "FAIL"))
     if not ok:
         print("progress:", read(out, "progress.txt")[:300])
+        print("last screen:", " ".join(read(out, "screen.txt").split())[-600:])
     return 0 if ok else 1
 
 

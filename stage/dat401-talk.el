@@ -13,25 +13,25 @@
         ("Step 2 · Some rows" . 13)
         ("Step 3 · Queries" . 17)
         ("Step 4 · An API, from one prompt" . 19)
-        ("Step 5 · A million rows, and a bad plan" . 22)
-        ("Step 6 · An index, without downtime" . 27)
-        ("Step 7 · A race, and foreign keys" . 35)
-        ("Step 8 · JSONB, and an index on an expression" . 54)
-        ("Step 10 · Change data capture" . 62)
-        ("Scale" . 65)))
+        ("Step 5 · A million rows, and a bad plan" . 23)
+        ("Step 6 · An index, without downtime" . 31)
+        ("Step 7 · A race, and foreign keys" . 41)
+        ("Step 8 · JSONB, and an index on an expression" . 62)
+        ("Step 10 · Change data capture" . 72)
+        ("Scale" . 78)))
 
 (demo-it-create
  :advanced-mode
  ;; 1. start: Intro
  (progn (dat401-section "Intro") (dat401-layout 'a))
  ;; 2. Step 1 · Two clusters, a connection, a schema (TALK.md line 121): run shell · pane A
- (progn (dat401-section "Step 1 · Two clusters, a connection, a schema") (dat401-layout 'a) (dat401-run 'a "aws dsql create-cluster --region us-west-2"))
+ (progn (dat401-section "Step 1 · Two clusters, a connection, a schema") (dat401-layout 'a) (dat401-run 'a "aws dsql create-cluster"))
  ;; 3. stage: highlight identifier
  (dat401-highlight 'a "identifier")
  ;; 4. stage: highlight endpoint
  (dat401-highlight 'a "endpoint")
  ;; 5. run shell · pane A
- (dat401-run 'a "export PGHOST=<cluster-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require")
+ (dat401-run 'a "export PGHOST=<cluster-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require")
  ;; 6. stage: clear
  (dat401-unhighlight)
  ;; 7. run shell · pane A
@@ -40,7 +40,7 @@ psql")
  ;; 8. stage: open pane B
  (dat401-open 'b)
  ;; 9. paste shell · pane B paste
- (dat401-paste 'b "export PGHOST=<cluster-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+ (dat401-paste 'b "export PGHOST=<cluster-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 export PGPASSWORD=\"$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST --expires-in 3600)\"")
  ;; 10. run shell · pane B
  (dat401-run 'b "psql")
@@ -74,125 +74,154 @@ from posts p join comments c on c.post_id = p.id;"))
  (dat401-run 'a "drop table comments, posts;
 \\i sql/01-schema.sql
 \\i sql/02-first-rows.sql")
- ;; 19. Step 4 · An API, from one prompt (TALK.md line 316): prompt
- (progn (dat401-section "Step 4 · An API, from one prompt") (dat401-layout 'a) (dat401-prompt "In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM. The cluster endpoint is <cluster-endpoint>; connect as admin. The tables already exist: read the schema from the database.
+ ;; 19. Step 4 · An API, from one prompt (TALK.md line 316): prompt, typed into the agent
+ (progn (dat401-section "Step 4 · An API, from one prompt") (dat401-layout 'a) (dat401-agent "In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM. The cluster endpoint is in $PGHOST; connect as admin. The tables already exist: read the schema from the database.
 
 Operations: ListPosts (newest first, with author), GetPost (with its comments and each commenter's username), CreatePost, AddComment.
 
 Give me an HTTP server and a small CLI that calls it over HTTP. Start the server and use the CLI to check that every operation works."))
- ;; 20. code demo/api/src/db.ts
+ ;; 20. close the agent
+ (dat401-quit-agent)
+ ;; 21. code demo/api/src/db.ts
  (dat401-code "demo/api/src/db.ts" '((4 . 5) (18 . 24) (36 . 37)))
- ;; 21. code demo/api/src/queries.ts
+ ;; 22. code demo/api/src/queries.ts
  (dat401-code "demo/api/src/queries.ts" '((204 . 204) (209 . 212) (215 . 217) (221 . 225)))
- ;; 22. Step 5 · A million rows, and a bad plan (TALK.md line 401): run shell · second terminal
+ ;; 23. Step 5 · A million rows, and a bad plan (TALK.md line 407): run shell · second terminal
  (progn (dat401-section "Step 5 · A million rows, and a bad plan") (dat401-layout 'a 'shell) (dat401-run 'shell "PGHOST=$PGHOST ./sql/05-load-sample-data.sh"))
- ;; 23. (close) run psql
+ ;; 24. (close) run psql
  (progn (dat401-close 'shell) (dat401-run 'a "explain analyze verbose
 select title, created_at from posts order by created_at desc limit 20;"))
- ;; 24. stage: highlight dpu
- (dat401-highlight 'a "dpu")
- ;; 25. run psql
+ ;; 25. stage: highlight scan
+ (dat401-highlight 'a "scan")
+ ;; 26. stage: highlight sort
+ (dat401-highlight 'a "sort")
+ ;; 27. stage: highlight time dpu
+ (dat401-highlight 'a "time" "dpu")
+ ;; 28. run psql
  (dat401-run 'a "select post_id from comments limit 1 \\gset
 explain analyze verbose
 select body, created_at from comments where post_id = :'post_id' order by created_at;")
- ;; 26. stage: highlight dpu
- (dat401-highlight 'a "dpu")
- ;; 27. Step 6 · An index, without downtime (TALK.md line 487): run psql
+ ;; 29. stage: highlight time dpu
+ (dat401-highlight 'a "time" "dpu")
+ ;; 30. stage: highlight scan cond
+ (dat401-highlight 'a "scan" "cond")
+ ;; 31. Step 6 · An index, without downtime (TALK.md line 497): run psql
  (progn (dat401-section "Step 6 · An index, without downtime") (dat401-layout 'a) (dat401-run 'a "create index async posts_created_at_idx on posts (created_at);"))
- ;; 28. run psql
+ ;; 32. run psql
  (dat401-run 'a "select job_id, status, object_name from sys.jobs where job_type = 'INDEX_BUILD';
 call sys.wait_for_job('<job_id>');")
- ;; 29. run psql
+ ;; 33. recall (Ctrl-R desc limit)
+ (dat401-recall 'a "explain analyze verbose
+select title, created_at from posts order by created_at desc limit 20;" "desc limit")
+ ;; 34. stage: highlight scan sort
+ (dat401-highlight 'a "scan" "sort")
+ ;; 35. run psql
  (dat401-run 'a "\\d+ posts")
- ;; 30. run psql
+ ;; 36. run psql
  (dat401-run 'a "create index async posts_recent_idx on posts (created_at) include (title);
 call sys.wait_for_job('<job_id>');")
- ;; 31. run psql
- (dat401-run 'a "explain analyze verbose
-select title, created_at from posts order by created_at desc limit 20;")
- ;; 32. stage: highlight index
- (dat401-highlight 'a "index")
- ;; 33. stage: highlight dpu
- (dat401-highlight 'a "dpu")
- ;; 34. run psql
+ ;; 37. recall (Ctrl-R desc limit)
+ (dat401-recall 'a "explain analyze verbose
+select title, created_at from posts order by created_at desc limit 20;" "desc limit")
+ ;; 38. stage: highlight time dpu
+ (dat401-highlight 'a "time" "dpu")
+ ;; 39. stage: highlight scan
+ (dat401-highlight 'a "scan")
+ ;; 40. run psql
  (dat401-run 'a "drop index posts_created_at_idx;")
- ;; 35. Step 7 · A race, and foreign keys (TALK.md line 570): run psql · both panes
- (progn (dat401-section "Step 7 · A race, and foreign keys") (dat401-layout 'a 'b) (dat401-run '(a b) "select id as post_id from posts where slug = 'hello-dsql' \\gset
+ ;; 41. Step 7 · A race, and foreign keys (TALK.md line 589): run psql · both panes (in A)
+ (progn (dat401-section "Step 7 · A race, and foreign keys") (dat401-layout 'a) (dat401-run 'a "select id as post_id from posts where slug = 'hello-dsql' \\gset
 select id as user_id from users where username = 'raluca' \\gset"))
- ;; 36. race psql · Pane A
+ ;; 42. copy into B
+ (dat401-copy-into 'a 'b "select id as post_id from posts where slug = 'hello-dsql' \\gset
+select id as user_id from users where username = 'raluca' \\gset")
+ ;; 43. race psql · Pane A
  (dat401-run 'a "begin;")
- ;; 37. race psql · Pane A
+ ;; 44. race psql · Pane A
  (dat401-run 'a "delete from posts where id = :'post_id';")
- ;; 38. race psql · Pane B
+ ;; 45. race psql · Pane B
  (dat401-run 'b "begin;")
- ;; 39. race psql · Pane B
+ ;; 46. race psql · Pane B
  (dat401-run 'b "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Nice post!');")
- ;; 40. race psql · Pane A
+ ;; 47. race psql · Pane A
  (dat401-run 'a "commit;")
- ;; 41. race psql · Pane B
+ ;; 48. race psql · Pane B
  (dat401-run 'b "commit;")
- ;; 42. run psql
+ ;; 49. run psql
  (dat401-run 'a "select comment_id, body from comments where post_id = :'post_id';")
- ;; 43. run psql
+ ;; 50. run psql
  (dat401-run 'a "alter table comments add constraint comments_post_fk
 foreign key (post_id) references posts (id) on delete cascade not valid;
 alter table async comments validate constraint comments_post_fk;
 call sys.wait_for_job('<job_id>');
 select status, details from sys.jobs where job_id = '<job_id>';")
- ;; 44. run psql
+ ;; 51. run psql
  (dat401-run 'a "delete from comments where post_id = :'post_id';
 alter table async comments validate constraint comments_post_fk;
 call sys.wait_for_job('<job_id>');")
- ;; 45. run psql · pane A
+ ;; 52. run psql · pane A
  (dat401-run 'a "insert into posts (author_id, slug, title, body)
 select id, 'hello-dsql', 'Hello, DSQL', 'again' from users where username = 'marc';")
- ;; 46. run psql · pane B
+ ;; 53. run psql · pane B
  (dat401-run 'b "\\c")
- ;; 47. run psql · both panes
- (dat401-run '(a b) "select id as post_id from posts where slug = 'hello-dsql' \\gset
+ ;; 54. run psql · both panes (in A)
+ (dat401-run 'a "select id as post_id from posts where slug = 'hello-dsql' \\gset
 select id as user_id from users where username = 'raluca' \\gset")
- ;; 48. race psql · Pane A
+ ;; 55. copy into B
+ (dat401-copy-into 'a 'b "select id as post_id from posts where slug = 'hello-dsql' \\gset
+select id as user_id from users where username = 'raluca' \\gset")
+ ;; 56. race psql · Pane A
  (dat401-run 'a "begin;")
- ;; 49. race psql · Pane A
+ ;; 57. race psql · Pane A
  (dat401-run 'a "delete from posts where id = :'post_id';")
- ;; 50. race psql · Pane B
+ ;; 58. race psql · Pane B
  (dat401-run 'b "begin;")
- ;; 51. race psql · Pane B
+ ;; 59. race psql · Pane B
  (dat401-run 'b "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Nice post!');")
- ;; 52. race psql · Pane A
+ ;; 60. race psql · Pane A
  (dat401-run 'a "commit;")
- ;; 53. race psql · Pane B
+ ;; 61. race psql · Pane B
  (dat401-run 'b "commit;")
- ;; 54. Step 8 · JSONB, and an index on an expression (TALK.md line 678): run psql
+ ;; 62. Step 8 · JSONB, and an index on an expression (TALK.md line 697): run psql
  (progn (dat401-section "Step 8 · JSONB, and an index on an expression") (dat401-layout 'a) (dat401-run 'a "select title, metadata from posts limit 2;"))
- ;; 55. run psql
+ ;; 63. run psql
  (dat401-run 'a "explain analyze verbose
 select title, created_at from posts
 where metadata->>'category' = 'databases'
 order by created_at desc limit 20;")
- ;; 56. stage: highlight dpu
- (dat401-highlight 'a "dpu")
- ;; 57. run psql
+ ;; 64. stage: highlight filter
+ (dat401-highlight 'a "filter")
+ ;; 65. stage: highlight time dpu
+ (dat401-highlight 'a "time" "dpu")
+ ;; 66. run psql
  (dat401-run 'a "create index async posts_category_idx on posts ((metadata->>'category'), created_at);
 call sys.wait_for_job('<job_id>');")
- ;; 58. run psql
- (dat401-run 'a "explain analyze verbose
+ ;; 67. recall (Ctrl-R = 'databases')
+ (dat401-recall 'a "explain analyze verbose
 select title, created_at from posts
 where metadata->>'category' = 'databases'
-order by created_at desc limit 20;")
- ;; 59. stage: highlight index
- (dat401-highlight 'a "index")
- ;; 60. stage: highlight dpu
- (dat401-highlight 'a "dpu")
- ;; 61. run psql
+order by created_at desc limit 20;" "= 'databases'")
+ ;; 68. stage: highlight scan cond
+ (dat401-highlight 'a "scan" "cond")
+ ;; 69. stage: highlight time dpu
+ (dat401-highlight 'a "time" "dpu")
+ ;; 70. run psql
  (dat401-run 'a "explain analyze select title from posts where metadata->'category' = '\"databases\"' limit 20;")
- ;; 62. Step 10 · Change data capture (TALK.md line 770): run shell
- (progn (dat401-section "Step 10 · Change data capture") (dat401-layout 'a 'events) (dat401-run 'events "./events/target/release/events --stream <kinesis-stream> --table comments"))
- ;; 63. run psql
+ ;; 71. stage: highlight scan filter
+ (dat401-highlight 'a "scan" "filter")
+ ;; 72. Step 10 · Change data capture (TALK.md line 810): run shell · pane events
+ (progn (dat401-section "Step 10 · Change data capture") (dat401-layout 'a 'events) (dat401-run 'events "aws kinesis create-stream --stream-name dat401-cdc --stream-mode-details StreamMode=ON_DEMAND --max-record-size-in-ki-b 10240"))
+ ;; 73. run shell · pane events
+ (dat401-run 'events "aws kinesis describe-stream-summary --stream-name dat401-cdc")
+ ;; 74. stage: highlight StreamARN
+ (dat401-highlight 'events "StreamARN")
+ ;; 75. run shell · pane events
+ (dat401-run 'events "./events/target/release/events --stream <kinesis-stream-arn> --table comments")
+ ;; 76. run psql
  (dat401-run 'a "select id as post_id from posts where slug like 'post-%' limit 1 \\gset")
- ;; 64. run psql
+ ;; 77. run psql
  (dat401-run 'a "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Hello from the stage');")
- ;; 65. Scale (TALK.md line 905): run shell
+ ;; 78. Scale (TALK.md line 975): run shell
  (progn (dat401-section "Scale") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
 ./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""))
  )

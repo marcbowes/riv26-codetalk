@@ -26,11 +26,11 @@ banners, nothing that says "step 3". Just terminals and files.
   5. Copy, go back to the prompt, and paste.
 
   The clipboard isn't touched: the value comes from a variable. An ID that
-  isn't on screen is pasted. A readable value (`<kinesis-stream>`) is typed.
+  isn't on screen is pasted, and a short readable value is typed.
 - **Pasting a block:** a ```` ```sh pane B paste ```` block is pasted whole
   (a bracketed paste, so the shell shows it as pasted), then run.
 
-- **Panes** are vterm buffers: `psql A`, `psql B`, `shell`, `events` and
+- **Panes** are terminal buffers (Ghostel, or vterm): `psql A`, `psql B`, `shell`, `events` and
   `load`. Each one starts in the repo root with `AWS_PROFILE` and
   `AWS_REGION` set. Once the cluster's endpoint is known, they also get
   `PGHOST` and the other psql settings.
@@ -56,13 +56,35 @@ copying and pasting from it.
 ## Setup (once)
 
 demo-it is already in `~/.doom.d/packages.el`, and `doom sync` has been run.
-**Restart Emacs** so it loads. vterm needs its module built for your Emacs. If
-`M-x vterm` asks to compile it, say yes, or build it by hand:
+**Restart Emacs** so it loads.
+
+The panes are **Ghostel** terminals: [ghostel](https://github.com/dakra/ghostel)
+runs libghostty-vt, the VT engine behind the Ghostty terminal. It's in
+`~/.doom.d/packages.el` as `(package! ghostel)`. Its native module is a
+prebuilt download from ghostel's releases. If it's missing (a `doom sync`
+that rebuilt ghostel deletes it), fetch it again:
 
 ```sh
-cd ~/.emacs.d/.local/straight/build-*/vterm && mkdir -p build && cd build \
-  && cmake -DUSE_SYSTEM_LIBVTERM=no .. && make
+G=~/.emacs.d/.local/straight/build-*/ghostel
+emacs -Q --batch -L $G --eval '(progn (require (quote ghostel)) (require (quote ghostel-module-install)) (ghostel--download-module (ghostel--module-directory)))'
 ```
+
+vterm still works as a fallback: `(setq dat401-terminal 'vterm)`. If you use
+it, build its module **with reflow off**. libvterm's reflow rewraps lines
+when a terminal resizes, and with a full-screen program running (the load
+generator) it can abort Emacs ("screen_resize failed to update cursor
+position"):
+
+```sh
+cd ~/.emacs.d/.local/straight/build-*/vterm && rm -rf build && mkdir build && cd build \
+  && cmake -DUSE_SYSTEM_LIBVTERM=no -DCMAKE_C_FLAGS=-DVTermScreenEnableReflowNotExists .. \
+  && make
+```
+
+The panes aren't text-scaled. A scaled terminal can be told the wrong size,
+which mangles full-screen programs. `dat401-start` makes the whole frame's
+font big instead (Doom's `doom-big-font-mode`), and `dat401-stop` puts it
+back.
 
 ## Running it
 
@@ -81,16 +103,18 @@ M-x dat401-start
 | `M-x dat401-reset` | Close every pane and forget the cluster, for a clean `dat401-start` (rehearsals) |
 
 You never copy anything by hand:
-- Step 1's first F12 types `aws dsql create-cluster`. `<cluster-id>` and
-  `<cluster-endpoint>` come from the endpoint it prints.
+- Step 1's first F12 types `aws dsql create-cluster`. `<cluster-endpoint>`
+  (and `<cluster-id>`) come from the endpoint it prints, copied from that
+  line.
 - `<job_id>` comes from the `CREATE INDEX ASYNC` output on screen.
-- Anything else (`<kinesis-stream>` in step 10) is asked for once in the
-  minibuffer, then remembered.
+- `<kinesis-stream-arn>` comes from the `describe-stream-summary` output in
+  step 10.
+- Anything else is asked for once in the minibuffer, then remembered.
 
 Step 1 goes like this:
 1. Type `create-cluster`.
 2. Highlight the identifier, then highlight the endpoint.
-3. Type the `PGHOST` export, pasting the identifier, which is highlighted too.
+3. Type the `PGHOST` export, copying the endpoint in, which is highlighted too.
 4. Clear the highlights.
 5. Type the token export and `psql` in pane A, full screen.
 6. Open pane B, paste its exports, then type `psql` there.
@@ -103,7 +127,7 @@ back to you.
 Settings (`M-x customize-group RET dat401`):
 
 - `dat401-typing-speed`: 1.0 is a person at a keyboard, 0.5 is twice as fast, 0 is instant.
-- `dat401-text-scale`: how large the text is.
+- `dat401-text-scale`: how large files (code) are. Terminals use `dat401-big-font`.
 - `dat401-aws-profile` and `dat401-aws-region`: bowes and us-west-2.
 - `dat401-wait-timeout`: how long to wait for psql, 180 s.
 

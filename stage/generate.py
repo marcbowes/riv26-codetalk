@@ -20,7 +20,9 @@ A stage direction is an HTML comment, hidden on GitHub, one F12 each:
 
     <!-- stage: highlight identifier -->   highlight the "identifier" value in
                                            the last command's output (any JSON
-                                           field, or `dpu`: EXPLAIN's DPU total)
+                                           field), or parts of an EXPLAIN plan:
+                                           scan, sort, filter, cond, time, dpu
+                                           (several at once: `highlight time dpu`)
     <!-- stage: clear -->                  clear the highlights (the next
                                            command does too, unless it pastes)
     <!-- stage: open pane B -->            put pane B on screen
@@ -157,6 +159,9 @@ def panes_for(target, command):
         return ["b"]
     if "pane a" in t:
         return ["a"]
+    m = re.search(r"\bpane (shell|events)\b", t)
+    if m:
+        return [m.group(1)]
     if t.startswith("psql"):
         return ["a"]
     first = command.strip().splitlines()[0] if command.strip() else ""
@@ -173,6 +178,8 @@ def layout_for(panes):
         return ["load"]
     if "b" in s:
         return ["a", "b"]
+    if "claude" in s:
+        return ["a"]            # dat401-agent opens its own frame
     if "events" in s:
         return ["a", "events"]
     if "shell" in s:
@@ -195,8 +202,8 @@ PANES = ("a", "b", "shell", "events")
 def cue_form(direction, pane, line):
     """A <!-- stage: ... --> direction -> an Elisp form."""
     words = direction.split()
-    if len(words) == 2 and words[0] == "highlight":
-        return "(dat401-highlight '%s %s)" % (pane, el(words[1]))
+    if len(words) >= 2 and words[0] == "highlight":
+        return "(dat401-highlight '%s %s)" % (pane, " ".join(el(w) for w in words[1:]))
     if words == ["clear"]:
         return "(dat401-unhighlight)"
     if len(words) == 3 and words[0] in ("open", "close") and words[1] == "pane" \
@@ -230,14 +237,30 @@ def step_forms(step):
                 continue
             panes = panes_for(b.get("target"), text)
             last_pane = panes[-1]
-            if "paste" in (b.get("target") or "").lower().split():
+            recall = re.search(r"\brecall\b:?\s*(.*)$", b.get("target") or "")
+            if recall:
+                # Run again from psql's history: Ctrl-R and a few characters.
+                search = lowercase_sql(recall.group(1).strip()) or text.splitlines()[-1].rstrip(";")[-12:]
+                add(panes, "recall (Ctrl-R %s)" % search,
+                    "(dat401-recall '%s %s %s)" % (panes[0], el(text), el(search)))
+            elif panes == ["a", "b"]:
+                # Both panes: type it in A, then (another F12) copy each line
+                # from A's screen into B, as you would. Not typed twice.
+                add(["a"], "%s %s (in A)" % (kind.lower(), b.get("target") or ""),
+                    "(dat401-run 'a %s)" % el(text))
+                add(["b"], "copy into B", "(dat401-copy-into 'a 'b %s)" % el(text))
+            elif "paste" in (b.get("target") or "").lower().split():
                 add(panes, "paste %s" % b.get("target"),
                     "(dat401-paste '%s %s)" % (panes[0], el(text)))
             else:
                 add(panes, "%s %s" % (kind.lower(), b.get("target") or ""),
                     "(dat401-run %s %s)" % (el_panes(panes), el(text)))
         elif kind == "PROMPT":
-            add([], "prompt", "(dat401-prompt %s)" % el(b.get("command") or ""))
+            # Typed into Claude Code in a frame beside A, never submitted; the
+            # next F12 closes the frame ("I did this earlier, so you don't
+            # have to wait").
+            add(["claude"], "prompt, typed into the agent", "(dat401-agent %s)" % el(b.get("command") or ""))
+            add([], "close the agent", "(dat401-quit-agent)")
         elif kind == "CUE":
             form = cue_form(b["target"], last_pane, b["line"])
             if form.startswith("(dat401-close "):
@@ -293,7 +316,7 @@ def generate(talk):
             # they need them (step 1: create the cluster in A, then connect
             # in A and B).
             p0, c0, f0 = forms[0]
-            layout = layout_for(p0) if p0 else ["a"]
+            layout = layout_for(p0[:1]) if p0 else ["a"]
             index.append((title, len(steps) + 1))
             head = "(progn (dat401-section %s) (dat401-layout %s) %s)" % (
                 el(title), " ".join("'" + p for p in layout), f0)

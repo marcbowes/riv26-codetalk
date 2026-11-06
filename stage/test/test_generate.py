@@ -40,6 +40,7 @@ class Panes(unittest.TestCase):
         self.assertEqual(generate.panes_for("psql", "SELECT 1;"), ["a"])
         self.assertEqual(generate.panes_for("psql · Pane B", "COMMIT;"), ["b"])
         self.assertEqual(generate.panes_for("shell · pane A", "aws dsql create-cluster"), ["a"])
+        self.assertEqual(generate.panes_for("shell · pane events", "aws kinesis create-stream"), ["events"])
         self.assertEqual(generate.panes_for("psql · both panes", "\\c"), ["a", "b"])
         self.assertEqual(generate.panes_for("shell · both panes", "psql"), ["a", "b"])
         self.assertEqual(generate.panes_for("shell · second terminal", "./sql/05-load-sample-data.sh"), ["shell"])
@@ -78,6 +79,16 @@ class Cues(unittest.TestCase):
         self.assertEqual(generate.cue_form("open pane B", "a", 1), "(dat401-open 'b)")
         self.assertEqual(generate.cue_form("close pane shell", "a", 1), "(dat401-close 'shell)")
         self.assertEqual(generate.cue_form("highlight dpu", "a", 1), "(dat401-highlight 'a \"dpu\")")
+        self.assertEqual(generate.cue_form("highlight time dpu", "a", 1),
+                         "(dat401-highlight 'a \"time\" \"dpu\")")
+
+    def test_recall_runs_from_history(self):
+        step = {"beats": [{"kind": "RUN", "target": "psql · recall: desc limit", "line": 1,
+                           "command": "EXPLAIN ANALYZE VERBOSE\nSELECT 1 ORDER BY x DESC LIMIT 20;",
+                           "elems": [{"kind": "code", "lang": "sql"}]}]}
+        self.assertEqual(generate.step_forms(step)[0][2],
+                         "(dat401-recall 'a \"explain analyze verbose\nselect 1 order by x desc limit 20;\" "
+                         "\"desc limit\")")
 
     def test_close_rides_along_with_the_next_command(self):
         step = {"beats": [
@@ -105,17 +116,19 @@ class RealTalk(unittest.TestCase):
         out = generate.generate(talk)
         cmds = [b for p in talk["parts"] if p["talk"] for s in p["steps"] if s["talk"]
                 for b in s["beats"] if b["kind"] in ("RUN", "RACE", "PROMPT", "SHOW", "CUE")]
-        self.assertEqual(out.count("(dat401-run ") + out.count("(dat401-paste ") + out.count("(dat401-prompt ")
+        self.assertEqual(out.count("(dat401-run ") + out.count("(dat401-paste ") + out.count("(dat401-agent ")
                          + out.count("(dat401-code ") + out.count("(dat401-highlight ")
                          + out.count("(dat401-unhighlight)") + out.count("(dat401-open ")
-                         + out.count("(dat401-close "),
+                         + out.count("(dat401-close ") + out.count("(dat401-recall "),
                          len(cmds))
-        self.assertEqual(out.count("(dat401-highlight 'a \"dpu\")"), 5)
+        self.assertGreaterEqual(out.count("(dat401-recall 'a "), 3)       # re-runs come from history
         self.assertNotIn("(dat401-key ", out)                # no banners: it should look live
-        self.assertIn("(dat401-paste 'b \"export PGHOST=<cluster-id>", out)
+        self.assertEqual(out.count("(dat401-agent "), out.count("(dat401-quit-agent)"))  # always closed
+        self.assertNotIn("\\n", out[out.index("(dat401-agent "):].split(")", 1)[0])  # no newline: never submitted
+        self.assertIn("(dat401-paste 'b \"export PGHOST=<cluster-endpoint>", out)
         self.assertIn("(dat401-highlight 'a \"identifier\")", out)   # step 1
         self.assertIn('(dat401-code "demo/api/src/db.ts"', out)   # step 4
-        self.assertIn("(dat401-layout 'a 'b)", out)          # the race
+        self.assertIn("(dat401-copy-into 'a 'b ", out)       # the race: B copies from A
         self.assertNotIn("sdtn7gjobfeglgjbysgk3pog4i", out)  # rehearsal job id replaced
 
     def test_generated_file_is_current(self):
