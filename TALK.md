@@ -656,41 +656,31 @@ index, or model it as rows.
 > compression, but `pg_attribute.attcompression` is `l` (lz4) on `title`,
 > `body` and `metadata`. Large text and JSON values are stored compressed.
 
-### Step 9 · Scale to zero, and an accident · 27:00–32:00
+### Step 9 · Scale to zero · 27:00–29:00
 
-I want to show you change data capture, but first let's tidy up. In the
-console there are **two** clusters. Cluster B, the one the agent made, has
-never been used. Its monitoring shows nothing at all: no DPUs, no instance
-ticking over.
+Before change data capture, let's tidy up. In the console there are **two**
+clusters. Cluster B, the one the agent made in step 1, has never been used. Its
+monitoring shows nothing at all: no DPUs, no instance ticking over.
 
 > **★ DSQL difference: idle costs nothing.** There's no instance to keep
 > warm. A cluster that isn't doing work bills only for its storage, which for
 > cluster B is nothing.
 
-We don't need it, so let's delete it. I select it, choose Delete, type the
-confirmation...
-
-<!-- beat -->
-
-...and that was cluster A. The one with our blog in it.
-
-*(Point-in-time restore: the commands and timings for this part will be added
-once the feature is available. The story: restore cluster A to a minute before
-the delete, from the console, and carry on.)*
+We don't need it, so let's delete it. The console won't let me yet: clusters
+created through the API have deletion protection on by default. Turn it off,
+then delete. That's exactly what it's for.
 
 <details>
 <summary>Presenter notes</summary>
 
-- Deletion protection is on by default for API-created clusters. Either
-  disable it on A before the talk, or use it: "this is what it's for".
-- Restore details are still to come: API, duration, endpoint changes.
-  If the endpoint changes, re-export `PGHOST`,
-  and point CDC at the restored cluster.
-- CDC needs an `ACTIVE` cluster. Run a query against the restored one first.
-- **Following along:** don't delete your cluster unless you mean to.
+- Delete **B**, the agent's cluster, not A. A has the blog, and step 10 needs it.
+- If B's deletion protection is off (depends how the agent created it), skip
+  the protection line or show where the setting lives.
+- **Following along:** `aws dsql update-cluster --identifier <B> --no-deletion-protection-enabled`,
+  then `aws dsql delete-cluster --identifier <B>`.
 </details>
 
-### Step 10 · Change data capture · 32:00–34:00
+### Step 10 · Change data capture · 29:00–32:00
 
 Every committed change, streamed to Kinesis. First, start the viewer (it reads
 from the latest position, so it shows only new changes):
@@ -754,7 +744,7 @@ aws dsql create-stream --cluster-identifier <cluster-A-id> \
 ```
 </details>
 
-### Step 11 · Multi-Region · 34:00–35:00
+### Step 11 · Multi-Region · 32:00–35:00
 
 Last console stop: **Create cluster → Multi-Region**. You choose the two Regions
 that take reads and writes, us-west-2 and us-east-1, and a **witness** Region,

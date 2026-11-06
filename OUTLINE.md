@@ -9,7 +9,7 @@ running serverless, multi-Region and at scale.
 
 ## Ground rules for AI and other slow steps
 
-Anything that takes a while to finish (an agent task, a restore, an index build) must:
+Anything that takes a while to finish (an agent task, an index build) must:
 
 1. have a high success rate (rehearsed many times, with a fallback snapshot),
 2. not take too long, and
@@ -43,8 +43,8 @@ PostgreSQL. Then the agenda.
 | 6 | Add the home-page index. `posts (created_at)` gets *ignored* by the planner (each hit needs a lookup into the table, which is its PK B-tree); `INCLUDE (title)` makes it covering: 208 ms → 0.7 ms. No comments index needed. | psql | `CREATE INDEX ASYNC` → job in `sys.jobs` → `wait_for_job` → EXPLAIN again. |
 | 7 | FK race: two psql sessions side by side. A deletes a post while B comments on it, and both commit, leaving an orphan. Add the FK `NOT VALID`; validation fails on the orphan. Clean up, validate (a job), and re-run the race. | psql ×2 | Good teaching moment: why both commit without the FK (no write-write conflict) and what the FK changes under OCC. |
 | 8 | Query posts by category from `metadata`, then add the expression index on `metadata->>'category'`. Show `->` vs `->>` missing the index. | psql | See the backfill note under Risks. |
-| 9 | "Let's set up CDC." In the console, notice there are two clusters. The extra one costs nothing (CloudWatch: zero DPU, so it scales to zero). Clean it up anyway, but delete the **wrong** one. Act alarmed. PITR in the console brings it back. | console | **PITR not shipped yet.** See the PITR notes under Risks. |
-| 10 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add a comment from psql and watch them arrive. | console, CLI | Kinesis stream and CDC role set up by hand (not part of `demo/`). Point CDC at the restored cluster. |
+| 9 | Scale to zero: in the console there are two clusters; cluster B (the agent's) has never been used and costs nothing (CloudWatch: zero DPU). Delete it: turn off deletion protection first (API default), then delete. | console | Delete B, not A. Point-in-time restore was cut (2026-11-05). |
+| 10 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add a comment from psql and watch them arrive. | console, CLI | Kinesis stream and CDC role set up by hand (not part of `demo/`). CDC goes on cluster A. |
 | 11 | Multi-Region, explained verbally while walking through setup in the console. | console | Just show the flow; the real one is already built. |
 
 ### 35:00–40:00 The polished app
@@ -60,20 +60,10 @@ no intervention. Live TPS.
 
 ## Risks and things to settle
 
-- **Timing.** Twelve steps in 30 minutes is about 2.5 minutes each. The rough
-  estimate comes to ~32. Easiest cuts: merge 2 and 3, and keep 12 to about a minute.
-  There's no slack for Q&A.
-- **PITR (step 9):**
-  - Can you restore a cluster that has been *deleted*?
-  - Deletion protection is on by default for clusters created through the API
-    (and probably the console), so the "oops" needs a disable step first. That
-    can be framed as "this is why it exists".
-  - Restore duration: if it's slow, do step 11 during the restore, then step 10.
-  - Does the restored cluster get a new endpoint? If so, the step-4 server and
-    the step-8 page need restarting with the new endpoint, and CDC goes on the
-    restored cluster.
-  - CDC `CreateStream` requires the cluster to be `ACTIVE`. Connect to an idle
-    cluster first to wake it.
+- **Timing.** Eleven steps in 30 minutes. Easiest cuts if it runs long: merge 2
+  and 3, and keep 11 to about a minute. There's no slack for Q&A.
+- **CDC (step 10):** `CreateStream` requires the cluster to be `ACTIVE`; cluster A
+  is busy by then, so that's fine. The Kinesis stream needs `MaxRecordSizeInKiB` 10240.
 - **Per-transaction limits (3,000 rows, 10 MiB):**
   - Sample data (step 5) has to load in batches.
   - A metadata backfill in step 8 (`UPDATE` across all posts) would hit the limit.
@@ -130,7 +120,5 @@ no intervention. Live TPS.
 
 ## Open questions
 
-- PITR: API, restore time, whether it can restore a deleted cluster, and what
-  happens to the endpoint. (Marc to share.)
 - Major version upgrades: anything to show?
 - Finale target TPS.
