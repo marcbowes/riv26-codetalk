@@ -98,6 +98,9 @@ Prose goes in faster than SQL."
 
 (defvar dat401--section "" "The current talk step (for `dat401-goto').")
 (defvar dat401--hurry nil "Non-nil: finish the current command instantly.")
+(defvar dat401--fast nil
+  "Non-nil while fast-forwarding (`dat401-goto'): commands run for real, at
+once, without the show: no highlights, code views, agent or copy animation.")
 (defvar dat401--layout nil "The panes on screen, e.g. (a b), or (view) for a file.")
 (defvar dat401--steps-index nil "Alist of (TITLE . demo-it step number), from dat401-talk.el.")
 
@@ -326,7 +329,8 @@ called in it to insert and decorate the contents."
   "Open FILE (relative to the repo) full screen, narrowed to RANGES' span.
 RANGES are (FIRST . LAST) line numbers: the excerpt TALK.md shows. Those
 lines are highlighted; the lines between them are dimmed."
-  (let ((path (expand-file-name file dat401-repo)))
+  (unless dat401--fast
+   (let ((path (expand-file-name file dat401-repo)))
     (dat401--view
      (file-name-nondirectory file)
      (lambda ()
@@ -343,7 +347,7 @@ lines are highlighted; the lines between them are dimmed."
        (narrow-to-region (dat401--line-pos (caar ranges))
                          (dat401--line-pos (1+ (cdar (last ranges)))))
        (setq-local display-line-numbers-widen t)
-       (display-line-numbers-mode 1)))))
+       (display-line-numbers-mode 1))))))
 
 ;;;; The AI agent (step 4)
 
@@ -351,6 +355,7 @@ lines are highlighted; the lines between them are dimmed."
   "Open a terminal beside pane A, start the agent (Claude Code) in it, and
 type TEXT into its prompt. It's never submitted: no Enter and no newline is
 ever sent (paragraphs are typed as one), and `dat401-quit-agent' closes it."
+  (unless dat401--fast
   (dat401-unhighlight)
   (setq dat401--hurry nil)
   (dat401-open 'claude)
@@ -363,7 +368,7 @@ ever sent (paragraphs are typed as one), and `dat401-quit-agent' closes it."
     (dolist (cd (dat401--delays text))
       (dat401--send 'claude (car cd))
       (dat401--sleep (cdr cd))))
-  (setq dat401--hurry nil))
+  (setq dat401--hurry nil)))
 
 (defun dat401-quit-agent ()
   "Close the agent's frame without submitting anything: the window goes
@@ -563,7 +568,7 @@ JSON field.")
 (defun dat401-highlight (pane &rest whats)
   "Highlight WHATS in PANE's latest output: parts of an EXPLAIN plan (scan,
 sort, filter, cond, time, dpu), or the values of JSON fields (identifier)."
-  (dolist (what whats)
+  (dolist (what (unless dat401--fast whats))
     (dat401--mark pane (or (cdr (assoc what dat401--named-marks))
                            (format "\"%s\": \"\\([^\"\n]+\\)\"" (regexp-quote what))))))
 
@@ -737,7 +742,8 @@ to the prompt. Nothing touches the clipboard: the caller pastes VALUE from a
 variable. Returns non-nil if VALUE was on screen to copy."
   (let* ((buf (dat401--pane pane))
          (win (get-buffer-window buf))
-         (found (and win (not dat401--hurry) (dat401--find-on-screen buf value context)))
+         (found (and win (not dat401--hurry) (not dat401--fast)
+                     (dat401--find-on-screen buf value context)))
          (start (car found)))
     (when found
       (cl-incf dat401--copies)
@@ -812,9 +818,25 @@ copied from the screen if it's there, pasted if it's an id, otherwise typed."
                                 '(a b shell))))
   (remhash "cluster-endpoint" dat401--vars))
 
+(defun dat401--wait-settled (pane &optional timeout)
+  "Wait until PANE has finished what it was given. Right after Enter the
+screen can still show the old prompt (the terminal hasn't echoed yet), so
+give it a moment, then wait for a prompt that stays put: no new output for
+a beat. Up to TIMEOUT seconds (default `dat401-wait-timeout')."
+  (let ((deadline (+ (float-time) (or timeout dat401-wait-timeout)))
+        (done nil))
+    (dat401--pause-for 0.3)
+    (while (and (not done) (< (float-time) deadline))
+      (dat401--wait-for (lambda () (dat401--at-prompt-p pane))
+                        (max 0.1 (- deadline (float-time))))
+      (let ((before (dat401--pane-text pane)))
+        (dat401--pause-for 0.25)
+        (setq done (and (dat401--at-prompt-p pane)
+                        (equal before (dat401--pane-text pane))))))
+    done))
+
 (defun dat401--wait-prompt (pane)
-  (dat401--pause-for 0.3)
-  (dat401--wait-for (lambda () (dat401--at-prompt-p pane)) dat401-wait-timeout))
+  (dat401--wait-settled pane))
 
 (defun dat401--type (pane text)
   "Type TEXT into PANE line by line. Between lines, wait for a shell command
@@ -928,13 +950,48 @@ paste, so the shell shows it as pasted and runs it on Enter."
 
 (add-to-list 'emulation-mode-map-alists `((dat401-stage-mode . ,dat401-stage-map)))
 
+(defun dat401--fast-forward (from to)
+  "Run demo-it steps FROM..TO (1-based) for real, at once and without the
+show (`dat401--fast'), so the state is what those steps leave: the cluster,
+psql sessions, data, indexes. After each step, wait for psql A, B and the
+shell to be back at a prompt (the loader, index jobs). Stops at the first
+error, leaving the next F12 on the step that failed. Returns non-nil if it
+got all the way."
+  (let ((dat401--fast t)
+        (dat401-typing-speed 0)
+        (ok t))
+    (catch 'stop
+      (cl-loop for n from from to to
+               do (let ((step (nth (1- n) demo-it--steps)))
+                    (message "Fast-forward: step %d of %d" n to)
+                    (condition-case err
+                        (eval step t)
+                      (error (message "Fast-forward stopped at step %d: %S" n err)
+                             (setq demo-it--step (1- n) ok nil)
+                             (throw 'stop nil)))
+                    ;; Each pane done (the loader, index jobs) before the next step.
+                    (dolist (p '(a b shell))
+                      (when (get-buffer (dat401--buffer-name p))
+                        (dat401--wait-settled p 300)))
+                    (setq demo-it--step n))))
+    (dat401-unhighlight)
+    (setq dat401--hurry nil)
+    ok))
+
 (defun dat401-goto (title)
-  "Jump to the first step of talk step TITLE (the next F12 runs it)."
+  "Jump to the first step of talk step TITLE (the next F12 runs it).
+Going forward, it offers to run the steps in between for real, fast, so
+the step starts from the state it expects (a cluster, psql, data...)."
   (interactive (list (completing-read "Talk step: " (mapcar #'car dat401--steps-index) nil t)))
-  (let ((n (alist-get title dat401--steps-index nil nil #'equal)))
-    (setq demo-it--step (1- n))
-    (dat401-section title)
-    (message "Next F12 runs: %s" title)))
+  (let ((n (alist-get title dat401--steps-index nil nil #'equal))
+        (done demo-it--step))
+    (if (and (> n (1+ done))
+             (y-or-n-p (format "Run steps %d-%d for real (fast) to get there? " (1+ done) (1- n))))
+        (when (dat401--fast-forward (1+ done) (1- n))
+          (message "Next F12 runs: %s" title))
+      (setq demo-it--step (1- n))
+      (message "Next F12 runs: %s" title))
+    (dat401-section title)))
 
 ;;;###autoload
 (defun dat401-start ()

@@ -28,9 +28,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 
 
-def run(steps, timeout=900):
+def run(steps, timeout=900, jump=None):
     out = tempfile.mkdtemp(prefix="dat401-e2e-")
     env = dict(os.environ, DAT401_E2E_STEPS=steps, DAT401_E2E_OUT=out, TERM="xterm-256color")
+    if jump:
+        env["DAT401_E2E_JUMP"] = jump
     if not steps:
         env.pop("DAT401_E2E_STEPS")
     pid, fd = pty.fork()
@@ -83,10 +85,26 @@ def delete_created_cluster(pane_a):
     return "%s: %s" % (ident, status)
 
 
+JUMP_CHECKS = {
+    "finished", "cluster created in pane A", "both panes connected to psql",
+    "step 7: B's lookups copied in from A", "step 7: race 1 leaves orphans; validation fails",
+    "step 7: race 2 ends in OC000", "step 8: filter, then the expression index",
+    "no unresolved placeholders typed",
+}
+
+
 def main():
-    steps = sys.argv[1] if len(sys.argv) > 1 else ""
+    args = sys.argv[1:]
+    jump = None
+    if "--jump" in args:
+        # e2e.py --jump "Step 7 · A race, and foreign keys": what C-F12 does
+        # from a fresh start (fast-forward), then the rest as usual.
+        i = args.index("--jump")
+        jump = args[i + 1]
+        del args[i:i + 2]
+    steps = args[0] if args else ""
     os.environ.setdefault("AWS_PROFILE", "bowes")
-    out, status = run(steps)
+    out, status = run(steps, jump=jump)
     print("output in", out, "exit", status)
     print("deleted the cluster step 1 made:", delete_created_cluster(read(out, "pane-a.txt")))
     if read(out, "error.txt"):
@@ -135,6 +153,8 @@ def main():
         ("covering index used", "Index Only Scan Backward using posts_recent_idx" in a),
         ("no unresolved placeholders typed", not re.search(r"<(job_id|cluster-endpoint|cluster-id)>", a + b)),
     ]
+    if jump:
+        checks = [c for c in checks if c[0] in JUMP_CHECKS]
     width = max(len(c) for c, _ in checks)
     ok = True
     for name, passed in checks:

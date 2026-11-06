@@ -427,3 +427,42 @@
     (setq unread-command-events (list 'f12 'f12))
     (dat401--sleep 0.05)
     (should (null unread-command-events))))
+
+(defvar dat401-test--log nil "Steps run, for the fast-forward test (evaluated forms need a global).")
+
+(ert-deftest dat401-fast-forward-runs-the-steps-without-the-show ()
+  (let* ((demo-it--steps
+          (list '(push 'intro dat401-test--log)
+                '(push 'create dat401-test--log)
+                '(progn (dat401-highlight 'a "dpu") (push 'highlighted dat401-test--log))
+                '(progn (dat401-code "nope.ts" '((1 . 1))) (push 'code dat401-test--log))
+                '(push 'schema dat401-test--log)
+                '(error "boom")
+                '(push 'never dat401-test--log)))
+         (demo-it--step 1)
+         (dat401--marks nil))
+    (setq dat401-test--log nil)
+    (cl-letf (((symbol-function 'dat401--wait-for) (lambda (&rest _) t))
+              ((symbol-function 'dat401--wait-settled) (lambda (&rest _) t)))
+      ;; Steps 2-5 run, in order; the highlight and the code view do nothing.
+      (should (dat401--fast-forward 2 5))
+      (should (equal (reverse dat401-test--log) '(create highlighted code schema)))
+      (should (null dat401--marks))
+      (should (= demo-it--step 5))
+      ;; An error stops it there: the next F12 retries the failing step.
+      (setq dat401-test--log nil)
+      (should-not (dat401--fast-forward 6 7))
+      (should (null dat401-test--log))
+      (should (= demo-it--step 5)))))
+
+(ert-deftest dat401-wait-settled-waits-past-a-stale-prompt ()
+  ;; Right after Enter the screen still shows the old prompt; then the
+  ;; command's output arrives, then a new prompt. Settled means the latter.
+  (let* ((screen "postgres=> ")
+         (t0 (float-time)))
+    (run-at-time 0.1 nil (lambda () (setq screen "postgres=> call sys.wait_for_job('x');\n")))
+    (run-at-time 0.8 nil (lambda () (setq screen (concat screen " succeeded\n t\n(1 row)\n\npostgres=> "))))
+    (cl-letf (((symbol-function 'dat401--pane-text) (lambda (_) screen)))
+      (should (dat401--wait-settled 'a 5)))
+    (should (string-suffix-p "(1 row)\n\npostgres=> " screen))
+    (should (> (- (float-time) t0) 0.8))))

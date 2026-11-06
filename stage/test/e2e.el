@@ -36,6 +36,15 @@
     (dat401-e2e--log "laying out pane A")
     (dat401-layout 'a)
     (dat401-e2e--log "pane A up")
+    ;; DAT401_E2E_JUMP="Step 7 · ...": what C-F12 does, fast-forward there
+    ;; from the start, then run from that step as usual.
+    (when-let* ((jump (getenv "DAT401_E2E_JUMP"))
+                (target (cdr (assoc jump dat401--steps-index))))
+      (dat401-e2e--log "fast-forwarding 2-%d" (1- target))
+      (unless (dat401--fast-forward 2 (1- target))
+        (error "fast-forward stopped at step %d" (1+ demo-it--step)))
+      (setq from target)
+      (dat401-e2e--log "fast-forwarded; running from %d" from))
     (cl-loop for n from from to to do
              (let ((step (nth (1- n) demo-it--steps)))
                (with-temp-file (expand-file-name "progress.txt" out)
