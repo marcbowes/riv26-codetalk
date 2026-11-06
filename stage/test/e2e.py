@@ -86,15 +86,27 @@ def main():
     if read(out, "error.txt"):
         print("ERROR:", read(out, "error.txt"))
     a, b, shell = read(out, "pane-a.txt"), read(out, "pane-b.txt"), read(out, "pane-shell.txt")
+    marks = [line.split(" ", 1)[1] for line in read(out, "marks.txt").splitlines() if " " in line]
+    counts = [m.count('"') // 2 for m in marks]
     checks = [
         ("finished", bool(read(out, "done.txt"))),
         ("cluster created in pane A", '"status": "CREATING"' in a),
         ("its endpoint typed in both panes", bool(re.search(r"export PGHOST=[a-z0-9]{26}\.dsql", a))
          and bool(re.search(r"export PGHOST=[a-z0-9]{26}\.dsql", b))),
         ("both panes connected to psql", "postgres=>" in a and "postgres=>" in b),
+        ("highlights: identifier, + endpoint, + pasted id",
+         [1, 2, 3] == [c for c in counts if c][:3]),
+        ("highlights cleared", bool(counts) and counts[-1] == 0 and 3 in counts),
+        ("DPU totals highlighted", sum(1 for m in marks if "DPU" in m) >= 3),
+        ("index highlighted after adding it", any("Index Only Scan Backward using posts_recent_idx" in m
+                                                  for m in marks)),
+        ("ids copied from the screen, not typed (cluster id + 2 job ids)",
+         int(read(out, "copies.txt").strip() or 0) >= 3),
+        ("pane B: exports pasted, then psql", "export PGPASSWORD" in b and "\n❯ psql" in b),
+        ("DDL typed without indentation, in lower case", "(> id uuid primary key" in a),
+        ("step 2: comment inserted via :'post_id'", "values (:'post_id', 'First!');\nINSERT 0 1" in a),
         ("tables created", a.count("CREATE TABLE") >= 3),
         ("step 4 code shown", "db.transactionWithRetry(" in read(out, "code.txt")),
-        ("identity-column error shown", "explicit cache size" in a),
         ("real schema loaded with \\i", "INSERT 0 1" in a),
         ("loader ran in the shell pane", "Done in" in shell),
         ("bad plan shown (full scan + sort)", "top-N heapsort" in a),

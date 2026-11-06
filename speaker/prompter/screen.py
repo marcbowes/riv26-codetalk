@@ -396,6 +396,7 @@ LEGEND = [
     ("run.label", " ▶ RUN ", "a command, with its target (psql, shell)"),
     ("prompt.label", " ✦ PROMPT ", "an AI prompt (c copies it)"),
     ("show.label", " ◆ CODE ", "code put on screen, with its file"),
+    ("cue.label", " ◇ STAGE ", "a stage direction: one F12 in stage/ (e.g. a highlight)"),
     ("expect.label", "EXPECT", "what the audience will see"),
     ("key.label", " ★ KEY POINT ", "must be said"),
     ("note.label", " ✎ PRESENTER NOTES ", "private notes for you"),

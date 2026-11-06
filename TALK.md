@@ -148,12 +148,19 @@ aws dsql create-cluster --region us-west-2
 }
 ```
 
-In rehearsal it was active four seconds later. That endpoint is all psql needs.
+<!-- stage: highlight identifier -->
+That's the cluster's identifier.
+<!-- stage: highlight endpoint -->
+And that's its endpoint: the identifier, then `.dsql.us-west-2.on.aws`. That's
+all psql needs. In rehearsal the cluster was active four seconds later.
 
 **Connect with psql.** Notice what's missing:
 
-```sh both panes
-export PGHOST=<cluster-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+```sh pane A
+export PGHOST=<cluster-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+```
+<!-- stage: clear -->
+```sh pane A
 export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST --expires-in 3600)"
 psql
 ```
@@ -167,6 +174,18 @@ nothing in a config file.
 > roles with `AWS IAM GRANT`. The DSQL connectors for node-postgres, Postgres.js,
 > JDBC, Python, Go, Rust, .NET, Ruby and PHP do this for you.
 
+<!-- stage: open pane B -->
+**A second session, for later.** Step 7 needs two. The same environment, then
+psql:
+
+```sh pane B paste
+export PGHOST=<cluster-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST --expires-in 3600)"
+```
+```sh pane B
+psql
+```
+
 **A small schema, typed by hand.** Posts first, with a UUID primary key:
 
 ```sql
@@ -177,36 +196,11 @@ CREATE TABLE posts (
 );
 ```
 
-Why not an ordinary integer ID? Let's try one on a throwaway table:
-
-```sql
-CREATE TABLE ids (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, note text);
-```
-```
-ERROR:  identity column is not supported without an explicit cache size.
-        please define CACHE greater than or equal to 65536 or equal to 1
-```
-
-This is the first place the distributed part shows. A sequence is one shared
-counter. In a database where many machines handle your inserts at once, you
-have to say how they share it:
-
-- **`CACHE 1`**: every ID comes from the shared counter. Dense and in order,
-  but each one is a round trip. In rehearsal, a single 3,000-row `INSERT` that
-  generated its IDs this way took **20.6 seconds**, about 7 ms per row.
-- **`CACHE 65536`**: blocks of IDs are reserved and handed out without going
-  back to the counter. The same 3,000 rows took **117 ms**. But expect gaps and
-  jumps (in rehearsal, one session's next ID was 65,537), and IDs don't follow
-  commit order.
-
-```sql
-CREATE TABLE ids (id bigint GENERATED ALWAYS AS IDENTITY (CACHE 65536) PRIMARY KEY, note text);
-DROP TABLE ids;
-```
-
-(That's also why `serial` doesn't exist here.) Sequences are fine when you want
-them. A table written a few times an hour that wants dense, ordered IDs can
-afford `CACHE 1`. But a UUID needs no counter at all, so that's what we'll use
+Why not an ordinary integer ID? Sequences work in DSQL, but a sequence is one
+shared counter, and when many machines handle your inserts at once you have to
+say how they share it. `CACHE 1` gives dense, ordered IDs at a round trip each.
+A big cache (65536 or more) is fast, but leaves gaps, and the IDs don't follow
+commit order. A UUID needs no counter at all, so that's what we'll use
 everywhere.
 
 Comments are the high-write table. Their IDs are UUIDs too, but the primary
@@ -250,24 +244,47 @@ scale without limit; comments across *all* posts do, and they still spread out.
 <summary>Presenter notes</summary>
 
 - demo-it types it. [`sql/00-by-hand.sql`](sql/00-by-hand.sql) is the same schema.
-- The connect block runs in both panes, so pane B is ready for step 7.
 - The console cluster is only for show. Nothing uses it until step 9 deletes
   it, so leave its deletion protection on: step 9 turns it off.
-- demo-it reads the endpoint from `create-cluster`'s output and types it in
-  both panes. There's nothing to paste.
+- F12s after `create-cluster`: highlight the identifier; highlight the
+  endpoint; type the `PGHOST` export (the identifier is pasted, and
+  highlighted too); clear; the token and `psql`. demo-it reads the identifier
+  from the output: there's nothing to copy by hand.
+- Pane B: F12 opens it, F12 pastes the exports, F12 runs `psql`. It's ready
+  for step 7.
 - If psql says the cluster isn't ready, wait a few seconds and run `psql` again.
+- Sequences are talked about, not shown: for the numbers (CACHE 1: a 3,000-row
+  insert took 20.6 s; CACHE 65536: 117 ms), see `sql/00-by-hand.sql`.
 </details>
 
 ### Step 2 · Some rows · 9:00–10:30
 
 ```sql
-INSERT INTO posts (title) VALUES ('Hello, DSQL'), ('Second post') RETURNING id;
-INSERT INTO comments (post_id, body) SELECT id, 'First!' FROM posts WHERE title = 'Hello, DSQL';
+INSERT INTO posts (title) VALUES ('Hello, DSQL'), ('Second post');
 ```
 
-Nothing to learn here, and that's the point: it's an `INSERT`. The IDs come
-back as UUIDs, generated on whichever part of the fleet handled the insert,
-with nothing shared to coordinate on.
+Nothing to learn here, and that's the point: it's an `INSERT`.
+
+```sql
+SELECT * FROM posts;
+```
+```text
+                  id                  |    title    |          created_at
+--------------------------------------+-------------+-------------------------------
+ 60ddf88c-76a5-4c34-a109-d5f0bef7b656 | Hello, DSQL | 2026-11-06 10:12:31.524811+00
+ fa165d6b-7dbf-4e93-b606-c3273f00370f | Second post | 2026-11-06 10:12:31.524811+00
+```
+
+The IDs are UUIDs, generated on whichever part of the fleet handled the
+insert, with nothing shared to coordinate on. To comment on the first post,
+save its ID in a psql variable:
+
+```sql
+SELECT id AS post_id FROM posts WHERE title = 'Hello, DSQL' \gset
+```
+```sql
+INSERT INTO comments (post_id, body) VALUES (:'post_id', 'First!');
+```
 
 ### Step 3 · Queries · 10:30–12:00
 
@@ -405,6 +422,7 @@ in that first line: 3,000 rows per transaction.
 > at most 3,000 rows and 10 MiB, and can run for at most 5 minutes. Bulk loads
 > batch, which is good practice anyway. Here, 8 batches run in parallel.
 
+<!-- stage: close pane shell -->
 **Now look at a query plan.** First the home page, the 20 newest posts:
 
 ```sql
@@ -424,6 +442,7 @@ SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
    Write: 0.00000 DPU
    Total: 120.76381 DPU
 ```
+<!-- stage: highlight dpu -->
 
 It read all 100,000 posts and sorted them to return 20. That's an ordinary
 PostgreSQL plan, but look at the bottom: **Statement DPU Estimate**. A DPU is
@@ -451,6 +470,7 @@ SELECT body, created_at FROM comments WHERE post_id = :'post_id' ORDER BY create
  Execution Time: 0.532 ms
    Total: 0.02316 DPU
 ```
+<!-- stage: highlight dpu -->
 
 **0.5 ms and 0.02 DPU, with no index added.** That's the primary key from
 step 1 paying off: the comments for this post are one contiguous range of
@@ -531,6 +551,8 @@ SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
  Execution Time: 0.736 ms
    Total: 0.04708 DPU
 ```
+<!-- stage: highlight index -->
+<!-- stage: highlight dpu -->
 
 **208 ms to 0.7 ms**, and **121 DPU to 0.05**. It's an index-only scan, read backwards for the `DESC`,
 so there's no sort and no lookups.
@@ -672,6 +694,7 @@ SELECT title, created_at FROM posts
 WHERE metadata->>'category' = 'databases'
 ORDER BY created_at DESC LIMIT 20;
 ```
+<!-- stage: highlight dpu -->
 
 That's a full scan: 87,570 rows filtered out, about 235 ms and 121 DPU.
 PostgreSQL's answer is an index on the expression:
@@ -696,6 +719,8 @@ ORDER BY created_at DESC LIMIT 20;
  Execution Time: 2.180 ms
    Total: 0.06800 DPU
 ```
+<!-- stage: highlight index -->
+<!-- stage: highlight dpu -->
 
 **235 ms to 2.2 ms.** One catch: the query has to use *exactly* the indexed
 expression. `->` returns JSON rather than text, so this version doesn't match

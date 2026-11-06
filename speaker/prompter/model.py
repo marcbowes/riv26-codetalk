@@ -16,8 +16,9 @@ KEY = "KEY"          # a ★ key message that must be said
 TABLE = "TABLE"      # a table
 RACE = "RACE"        # one row of a Pane A / Pane B table
 SHOW = "SHOW"        # a code excerpt put on screen, not run (target: its file)
+CUE = "CUE"          # a stage direction, <!-- stage: ... --> (target: the direction)
 
-BEAT_KINDS = (SAY, RUN, PROMPT, EXPECT, KEY, TABLE, RACE, SHOW)
+BEAT_KINDS = (SAY, RUN, PROMPT, EXPECT, KEY, TABLE, RACE, SHOW, CUE)
 
 
 @dataclass
@@ -86,7 +87,7 @@ class Beat:
     def summary(self, width: int = 70) -> str:
         if self.kind in (RUN, PROMPT):
             text = self.command
-        elif self.kind == SHOW:
+        elif self.kind in (SHOW, CUE):
             text = self.target
         elif self.kind == RACE:
             text = self.command or self.elems[0].plain()

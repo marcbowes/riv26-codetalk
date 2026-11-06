@@ -3,9 +3,23 @@
 The talk's terminal demos, run from Emacs with
 [demo-it](https://github.com/howardabrams/demo-it). Each press of F12 (or a
 clicker's PgDn) runs the next command from [TALK.md](../TALK.md), typed into
-the right pane at a human pace: quick bursts inside words, pauses between
-them and after punctuation, the odd hesitation, then a beat before Enter. You
-talk; it types.
+the right pane the way a person types. You talk; it types.
+
+It's meant to look live, not like a slideshow: there are no titles, no
+banners, nothing that says "step 3". Just terminals and files.
+
+- **Typing** has a person's rhythm, about 7 characters a second, unevenly:
+  - each line has its own tempo;
+  - some words come in a quick burst, others more slowly;
+  - there are gaps between words and longer ones after punctuation;
+  - Shift and symbols cost a moment;
+  - now and then there's a pause to think, or a hiccup mid-word.
+
+  SQL is typed in lower case and without indentation, as people do. TALK.md
+  keeps its formatting for readers.
+- **Pasting:** placeholders (`<cluster-id>`, `<job_id>`) go in all at once,
+  as if pasted. A ```` ```sh pane B paste ```` block is pasted whole (a
+  bracketed paste, so the shell shows it as pasted), then run.
 
 - **Panes** are vterm buffers: `psql A`, `psql B`, `shell`, `events` and
   `load`. Each one starts in the repo root with `AWS_PROFILE` and
@@ -14,12 +28,14 @@ talk; it types.
 - **Layouts** follow the commands. Most steps show psql A on its own. The
   foreign key race shows A and B side by side. The loader shows A with a
   shell along the bottom.
-- **★ DSQL difference** callouts become a yellow banner across the top.
-- **Code** fills the screen: the real file, narrowed to the excerpt TALK.md
-  shows, with the excerpt's lines highlighted and the lines between them
-  dimmed. Step 4 does this for `demo/api`.
-- **The AI prompt** in step 4 opens in a side window.
-- **The header line** names the current talk step.
+- **Highlights** on terminal output: `<!-- stage: highlight identifier -->`
+  highlights a JSON field's value. Highlights stay, and survive the terminal
+  redrawing, until `<!-- stage: clear -->`. A value pasted while they're on is
+  highlighted too.
+- **Files** open full screen, named like the file (`db.ts`, `prompt.md`). Code
+  is narrowed to the excerpt TALK.md shows, with its lines highlighted and the
+  lines between them dimmed. Step 4 does this for `demo/api` and its prompt.
+- **★ DSQL difference** callouts aren't shown. You say them; speaker has them.
 
 `speaker/` still works as the teleprompter on a second screen. This replaces
 copying and pasting from it.
@@ -49,13 +65,22 @@ M-x dat401-start
 | `C-u N F12` | Run step N |
 | `C-F12` or `M-x dat401-goto` | Jump to a talk step by name. The next F12 runs its first command |
 | `M-x dat401-stop` | Leave demo mode. The panes stay open |
-| `M-x dat401-reset` | Close every pane and forget the cluster ID, for a clean `dat401-start` (rehearsals) |
+| `M-x dat401-reset` | Close every pane and forget the cluster, for a clean `dat401-start` (rehearsals) |
 
-Nothing needs pasting. Step 1's first F12 types `aws dsql create-cluster`, and
-`<cluster-endpoint>` (and `<cluster-id>`) come from the endpoint it prints.
-`<job_id>` comes from the `CREATE INDEX ASYNC` output on screen. Anything else
-(`<kinesis-stream>` in step 10) is asked for once in the minibuffer, then
-remembered.
+You never copy anything by hand:
+- Step 1's first F12 types `aws dsql create-cluster`. `<cluster-id>` and
+  `<cluster-endpoint>` come from the endpoint it prints.
+- `<job_id>` comes from the `CREATE INDEX ASYNC` output on screen.
+- Anything else (`<kinesis-stream>` in step 10) is asked for once in the
+  minibuffer, then remembered.
+
+Step 1 goes like this:
+1. Type `create-cluster`.
+2. Highlight the identifier, then highlight the endpoint.
+3. Type the `PGHOST` export, pasting the identifier, which is highlighted too.
+4. Clear the highlights.
+5. Type the token export and `psql` in pane A, full screen.
+6. Open pane B, paste its exports, then type `psql` there.
 
 Typing waits for each statement or shell command to finish before it types
 the next line. It never waits after the last line, so a step that starts
@@ -64,7 +89,7 @@ back to you.
 
 Settings (`M-x customize-group RET dat401`):
 
-- `dat401-typing-speed`: 1.0 is a confident typist, 0.5 is twice as fast, 0 is instant.
+- `dat401-typing-speed`: 1.0 is a person at a keyboard, 0.5 is twice as fast, 0 is instant.
 - `dat401-text-scale`: how large the text is.
 - `dat401-aws-profile` and `dat401-aws-region`: bowes and us-west-2.
 - `dat401-wait-timeout`: how long to wait for psql, 180 s.
@@ -84,6 +109,7 @@ command and where it runs. A fence's info string picks the pane:
 - ```` ```sql ```` goes to psql A.
 - ```` ```sql pane B ```` goes to psql B, and ```` ```sh pane A ```` to pane A.
 - ```` ```sh both panes ```` and ```` ```sql both panes ```` go to A, then B.
+- ```` ```sh pane B paste ```` is pasted into B in one go, not typed.
 - ```` ```sh ```` goes to the shell. Commands that start with `./events/` go
   to the events pane, and commands that run `loadgen` go to the load pane.
 - ```` ```ts demo/api/src/db.ts ```` (any language, then a path) is a code
@@ -92,8 +118,13 @@ command and where it runs. A fence's info string picks the pane:
   no longer matches its file.
 - ```` ```text ```` is expected output. It's never typed.
 
-Comment lines and trailing comments are dropped before typing. A literal
-`wait_for_job('...')` id is replaced with `<job_id>`.
+Stage directions are HTML comments, hidden on GitHub, one F12 each:
+`<!-- stage: highlight <json field> -->`, `<!-- stage: clear -->` and
+`<!-- stage: open pane B -->`.
+
+Comment lines, trailing comments and indentation are dropped before typing,
+and SQL is lowercased outside quotes. A literal `wait_for_job('...')` id is
+replaced with `<job_id>`.
 
 ## Tests
 
@@ -102,8 +133,9 @@ B=~/.emacs.d/.local/straight/build-32.0.50
 emacs -Q --batch -L $B/demo-it -L $B/vterm -L stage -l stage/test/dat401-test.el -f ert-run-tests-batch-and-exit
 python3 -m unittest discover -s stage/test
 
-# End to end: real Doom Emacs in a pty, against an empty scratch cluster.
-# Runs the intro through step 6 (schema, step 4's code, loader, EXPLAIN,
-# both async indexes) and checks what the panes show.
-DAT401_E2E_CLUSTER=<id> python3 stage/test/e2e.py
+# End to end: real Doom Emacs in a pty. Runs the intro through step 6:
+# step 1 creates a real cluster (deleted afterwards), the highlights, pane B's
+# paste, the schema, step 4's code, the loader, EXPLAIN, both async indexes.
+# Then it checks what the panes show.
+AWS_PROFILE=bowes python3 stage/test/e2e.py
 ```

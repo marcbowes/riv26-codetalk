@@ -12,7 +12,7 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import inline
-from .model import EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE, Beat, Elem, Step
+from .model import CUE, EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE, Beat, Elem, Step
 from .parser import PLACEHOLDER_RE, command_pieces
 
 Style = Tuple[str, str, str]
@@ -516,6 +516,9 @@ def layout_step(step: Step, cur: int, width: int, show_reader: bool = False,
         elif beat.kind == EXPECT:
             text = beat.elems[0].text if beat.elems else ""
             blines = _expect_lines(text, state, cw, "EXPECT · on screen")
+        elif beat.kind == CUE:
+            blines = [Line(clip([(" ◇ STAGE ", S("cue.label", state)),
+                                 ("  " + beat.target, S("cue", state))], cw))]
         elif beat.kind == KEY:
             blines = _key_block(beat, state, cw)
         elif beat.kind == TABLE:
@@ -561,6 +564,8 @@ def beat_headline(beat: Beat, width: int = 200) -> List[Seg]:
                 (beat.target + ": ", S("next", "")), (first, S("next.code", ""))]
     if kind == SHOW:
         return [("CODE ", S("show.target", "fut")), (beat.target, S("next", ""))]
+    if kind == CUE:
+        return [("STAGE ", S("cue.label", "fut")), (" " + beat.target, S("next", ""))]
     if kind == RACE:
         return [("RACE ", S("run.target", "fut")),
                 (beat.target.replace("psql · ", "") + ": ", S("next", "")),

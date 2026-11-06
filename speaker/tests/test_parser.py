@@ -4,7 +4,7 @@ import unittest
 
 import helpers
 from prompter import inline, parser
-from prompter.model import EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE
+from prompter.model import CUE, EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE
 
 
 def kinds(step):
@@ -332,3 +332,34 @@ SELECT 1;
         self.assertEqual(parser.show_path("ts demo/api/src/db.ts"), "demo/api/src/db.ts")
         self.assertEqual(parser.show_path("sql pane B"), "")
         self.assertEqual(parser.show_path("sh"), "")
+
+
+class StageCue(unittest.TestCase):
+    TEXT = """# T
+
+## Build · 0:00–1:00
+
+### Step 1 · Cues · 0:00–1:00
+
+```sh pane A
+aws dsql create-cluster
+```
+```text
+{ "identifier": "x" }
+```
+
+<!-- stage: highlight identifier -->
+That's its identifier.
+<!-- stage:
+     clear -->
+<!-- beat -->
+"""
+
+    def test_stage_comments_are_cue_beats(self):
+        st = parser.parse_text(self.TEXT, "t.md").steps[-1]
+        self.assertEqual(kinds(st), [RUN, CUE, SAY, CUE])
+        run, cue, say, clear = st.beats
+        self.assertEqual(run.expect, '{ "identifier": "x" }')   # output still attaches
+        self.assertEqual(cue.target, "highlight identifier")
+        self.assertFalse(cue.copyable)
+        self.assertEqual(clear.target, "clear")

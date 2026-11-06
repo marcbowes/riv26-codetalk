@@ -10,22 +10,15 @@ CREATE TABLE posts (
   created_at timestamptz DEFAULT now()
 );
 
--- Aside: "couldn't we use integers?" Try it on a throwaway table:
-CREATE TABLE ids (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, note text);
---   ERROR:  identity column is not supported without an explicit cache size.
---           please define CACHE greater than or equal to 65536 or equal to 1
---
--- In a distributed database a sequence is a shared counter, so you choose:
---   CACHE 1      every id comes from the shared counter: dense and in order,
---                but each one is a round trip (~7 ms; a 3,000-row INSERT that
---                generates its ids took 20.6 s)
---   CACHE 65536  blocks of ids are reserved and handed out without going back
---                to the shared counter (the same 3,000 rows: 117 ms), but expect
---                gaps and jumps (in rehearsal one session jumped to 65537), and
+-- Said, not shown: "couldn't we use integers?" A sequence is a shared counter
+-- in a distributed database, so an identity column needs a cache:
+--   CACHE 1      dense and in order, but each id is a round trip (~7 ms; a
+--                3,000-row INSERT that generates its ids took 20.6 s)
+--   CACHE 65536  blocks of ids handed out without going back to the counter
+--                (the same 3,000 rows: 117 ms), but expect gaps and jumps, and
 --                ids don't follow commit order
--- (`serial` doesn't exist in DSQL, for the same reason.)
-CREATE TABLE ids (id bigint GENERATED ALWAYS AS IDENTITY (CACHE 65536) PRIMARY KEY, note text);
-DROP TABLE ids;
+-- Without a CACHE it's an error. (`serial` doesn't exist in DSQL, for the same
+-- reason.)
 -- A UUID needs no counter at all, which is why every table here uses them.
 
 -- Comments: the key starts with post_id. The table is stored by its primary
@@ -45,8 +38,10 @@ CREATE TABLE comments (
 );
 
 -- Step 2
-INSERT INTO posts (title) VALUES ('Hello, DSQL'), ('Second post') RETURNING id;
-INSERT INTO comments (post_id, body) SELECT id, 'First!' FROM posts WHERE title = 'Hello, DSQL';
+INSERT INTO posts (title) VALUES ('Hello, DSQL'), ('Second post');
+SELECT * FROM posts;
+SELECT id AS post_id FROM posts WHERE title = 'Hello, DSQL' \gset
+INSERT INTO comments (post_id, body) VALUES (:'post_id', 'First!');
 
 -- Step 3
 SELECT id, title, created_at FROM posts ORDER BY created_at DESC LIMIT 10;

@@ -17,7 +17,7 @@ import re
 from typing import List, Optional, Tuple
 
 from . import inline
-from .model import (EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE, Beat, Elem,
+from .model import (CUE, EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE, Beat, Elem,
                     Part, Step, Talk)
 from .timing import RANGE_FULL_RE, parse_range
 
@@ -49,6 +49,7 @@ HTML_LINE_RE = re.compile(
     r"^\s*</?(?:div|p|br|hr|img|summary|picture|source|table|thead|tbody|tr|td|th|center|"
     r"section|figure|figcaption|span|b|i|em|strong|a|kbd|sub|sup)\b[^>]*>", re.I)
 BEAT_MARK_RE = re.compile(r"\bbeat\b", re.I)
+STAGE_RE = re.compile(r"<!--\s*stage:\s*(.*?)\s*-->", re.S)
 STEP_LABEL_RE = re.compile(r"^(steps?|part|section|act)\b\s*(.*)$", re.I)
 PANE_RE = re.compile(r"\bpane\s+([A-Z0-9])\b", re.I)
 BOTH_PANES_RE = re.compile(r"\b(both|each) panes?\b", re.I)
@@ -213,7 +214,10 @@ def parse_blocks(lines: List[str], base: int = 1) -> List[Block]:
                     break
                 j += 1
             comment = "\n".join(text)
-            if BEAT_MARK_RE.search(comment):
+            stage = STAGE_RE.search(comment)
+            if stage:
+                out.append(Block("stage", ln, text=" ".join(stage.group(1).split())))
+            elif BEAT_MARK_RE.search(comment):
                 out.append(Block("beatbreak", ln))
             i = j + 1
             continue
@@ -546,6 +550,14 @@ def build_beats(blocks: List[Block], warnings: List[str], where: str) -> Tuple[L
             prev = b
             continue
         if b.kind == "beatbreak":
+            say_open = False
+            prev = b
+            continue
+        if b.kind == "stage":
+            # <!-- stage: highlight identifier -->: one press of the stage
+            # remote, shown so the teleprompter keeps pace with it.
+            add(Beat(CUE, elems=[Elem("para", spans=inline.parse(b.text), line=b.line)],
+                     target=b.text, line=b.line))
             say_open = False
             prev = b
             continue

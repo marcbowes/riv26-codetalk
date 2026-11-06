@@ -8,9 +8,27 @@ It reads TALK.md through speaker's parser (speaker --json), so both tools
 agree on what a command is and where it runs. Each talk step becomes:
 
     a section + layout change, merged into its first action;
-    one demo-it step per command (typed into its pane), race row, AI prompt
-    (shown in a side window), code excerpt (the real file, with the
-    excerpt's lines highlighted) and ★ key point (a banner).
+    one demo-it step per command (typed into its pane, or pasted: ```sh
+    pane B paste), race row, AI prompt and code excerpt (each opened like a
+    file), and stage direction.
+
+Nothing on screen says it's a demo: no titles, and ★ key points aren't
+shown (you say them). Typed lines lose their indentation, as a person
+typing them would.
+
+A stage direction is an HTML comment, hidden on GitHub, one F12 each:
+
+    <!-- stage: highlight identifier -->   highlight the "identifier" value in
+                                           the last command's output (any JSON
+                                           field, or `dpu`: EXPLAIN's DPU total)
+    <!-- stage: clear -->                  clear the highlights (the next
+                                           command does too, unless it pastes)
+    <!-- stage: open pane B -->            put pane B on screen
+    <!-- stage: close pane shell -->       take the shell off screen; no F12 of
+                                           its own: it happens with the next one
+
+Placeholders like <cluster-id> are pasted, not typed. While highlights are
+on, a pasted value is highlighted too.
 
 A code excerpt is a fence with a path after the language (```ts
 demo/api/src/db.ts). Its lines must appear in that file verbatim and in
@@ -72,14 +90,6 @@ def spans_text(spans):
     return "".join(s[0] for s in spans)
 
 
-def elem_text(e):
-    if e.get("spans"):
-        return spans_text(e["spans"])
-    if e.get("items"):
-        return "\n".join("• " + spans_text(i[2]) for i in e["items"])
-    return e.get("text", "")
-
-
 def strip_comment(line, marker):
     """Drop a trailing `marker` comment outside quotes (needs whitespace before it)."""
     quote = None
@@ -97,17 +107,44 @@ def strip_comment(line, marker):
     return line.rstrip()
 
 
+def lowercase_sql(text):
+    """SQL as a person types it: lower case, except inside quotes ('Hello,
+    DSQL', "Quoted", '{"category": "Rust"}') and <placeholders>."""
+    out, quote, i = [], None, 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == quote:
+                quote = None
+        elif c in ("'", '"'):
+            quote = c
+            out.append(c)
+        elif c == "<":
+            m = re.match(r"<[A-Za-z][A-Za-z0-9_-]*>", text[i:])
+            if m:
+                out.append(m.group(0))
+                i += len(m.group(0))
+                continue
+            out.append(c)
+        else:
+            out.append(c.lower())
+        i += 1
+    return "".join(out)
+
+
 def clean_command(text, lang):
-    """What gets typed: no comment lines, no trailing comments, real placeholders."""
+    """What gets typed: no comment lines, no trailing comments, no indentation,
+    real placeholders."""
     marker = "--" if lang in ("sql", "psql") else "#"
     out = []
     for line in text.splitlines():
         if line.strip().startswith(marker):
             continue
-        line = strip_comment(line, marker)
+        line = strip_comment(line, marker).lstrip()
         line = JOB_ID_LITERAL.sub(r"\1<job_id>\2", line)
         if line.strip():
-            out.append(line)
+            out.append(lowercase_sql(line) if lang in ("sql", "psql") else line)
     return "\n".join(out)
 
 
@@ -152,9 +189,36 @@ def el_panes(panes):
     return "'" + panes[0] if len(panes) == 1 else "'(" + " ".join(panes) + ")"
 
 
+PANES = ("a", "b", "shell", "events")
+
+
+def cue_form(direction, pane, line):
+    """A <!-- stage: ... --> direction -> an Elisp form."""
+    words = direction.split()
+    if len(words) == 2 and words[0] == "highlight":
+        return "(dat401-highlight '%s %s)" % (pane, el(words[1]))
+    if words == ["clear"]:
+        return "(dat401-unhighlight)"
+    if len(words) == 3 and words[0] in ("open", "close") and words[1] == "pane" \
+            and words[2].lower() in PANES:
+        return "(dat401-%s '%s)" % (words[0], words[2].lower())
+    raise SystemExit("TALK.md line %s: unknown stage direction %r (expected `highlight "
+                     "<field>`, `clear`, or `open|close pane <pane>`)" % (line, direction))
+
+
 def step_forms(step):
     """(comment, form) pairs for one talk step's beats."""
     forms = []
+    last_pane = "a"
+    merge = []      # forms that ride along with the next F12 (close pane)
+
+    def add(panes, comment, form):
+        if merge:
+            form = "(progn %s %s)" % (" ".join(merge), form)
+            comment = "(%s) %s" % (", ".join("close" for _ in merge), comment)
+            merge.clear()
+        forms.append((panes, comment, form))
+
     for b in step["beats"]:
         kind = b["kind"]
         if kind in ("RUN", "RACE"):
@@ -165,12 +229,21 @@ def step_forms(step):
             if not text:
                 continue
             panes = panes_for(b.get("target"), text)
-            forms.append((panes, "%s %s" % (kind.lower(), b.get("target") or ""),
-                          "(dat401-run %s %s)" % (el_panes(panes), el(text))))
+            last_pane = panes[-1]
+            if "paste" in (b.get("target") or "").lower().split():
+                add(panes, "paste %s" % b.get("target"),
+                    "(dat401-paste '%s %s)" % (panes[0], el(text)))
+            else:
+                add(panes, "%s %s" % (kind.lower(), b.get("target") or ""),
+                    "(dat401-run %s %s)" % (el_panes(panes), el(text)))
         elif kind == "PROMPT":
-            produced = b.get("expect") or ""
-            forms.append(([], "prompt", "(dat401-prompt %s%s)" % (
-                el(b.get("command") or ""), " " + el(produced) if produced else "")))
+            add([], "prompt", "(dat401-prompt %s)" % el(b.get("command") or ""))
+        elif kind == "CUE":
+            form = cue_form(b["target"], last_pane, b["line"])
+            if form.startswith("(dat401-close "):
+                merge.append(form)
+            else:
+                add([], "stage: %s" % b["target"], form)
         elif kind == "SHOW":
             path = b["target"]
             try:
@@ -178,13 +251,10 @@ def step_forms(step):
                     ranges = excerpt_ranges(b["elems"][0]["text"], f.read())
             except (OSError, ExcerptError) as e:
                 raise SystemExit("TALK.md line %s: excerpt of %s: %s" % (b["line"], path, e))
-            forms.append(([], "code %s" % path, "(dat401-code %s '(%s))" % (
-                el(path), " ".join("(%d . %d)" % r for r in ranges))))
-        elif kind == "KEY":
-            e = b["elems"][0]
-            title = "★ " + spans_text(e.get("title") or [])
-            body = "\n".join(elem_text(c) for c in e.get("children") or [])
-            forms.append(([], "key point", "(dat401-key %s %s)" % (el(title), el(body))))
+            add([], "code %s" % path, "(dat401-code %s '(%s))" % (
+                el(path), " ".join("(%d . %d)" % r for r in ranges)))
+    for form in merge:          # a close with nothing after it
+        forms.append(([], "close", form))
     return forms
 
 

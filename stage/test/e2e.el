@@ -25,6 +25,14 @@
                (with-temp-file (expand-file-name "progress.txt" out)
                  (insert (format "%d %S\n" n step)))
                (demo-it--execute-step step)
+               ;; What's highlighted in pane A after this step.
+               (when (get-buffer (dat401--buffer-name 'a))
+                 (let ((marked (with-current-buffer (dat401--buffer-name 'a)
+                                 (mapcar (lambda (o) (buffer-substring-no-properties
+                                                      (overlay-start o) (overlay-end o)))
+                                         dat401--mark-overlays))))
+                   (write-region (format "%d %S\n" n marked) nil
+                                 (expand-file-name "marks.txt" out) t 'silent)))
                ;; What a presenter does by eye: wait for the command to finish.
                (cond
                 ((string-match-p "05-load-sample-data" (format "%S" step))
@@ -36,9 +44,10 @@
       (when (get-buffer (dat401--buffer-name p))
         (with-temp-file (expand-file-name (format "pane-%s.txt" p) out)
           (insert (dat401--pane-text p)))))
-    (when (get-buffer "*code*")
+    (when (buffer-live-p (car dat401--views))
       (with-temp-file (expand-file-name "code.txt" out)
-        (insert (with-current-buffer "*code*" (buffer-string)))))
+        (insert (with-current-buffer (car dat401--views) (buffer-string)))))
+    (with-temp-file (expand-file-name "copies.txt" out) (insert (format "%d\n" dat401--copies)))
     (with-temp-file (expand-file-name "done.txt" out) (insert "ok\n"))
     (kill-emacs 0)))
 

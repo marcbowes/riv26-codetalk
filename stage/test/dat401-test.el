@@ -11,14 +11,28 @@
     (should (equal (mapconcat #'car ds "") line))
     (should (cl-every (lambda (d) (> (cdr d) 0)) ds))))
 
+(defun dat401-test--stats (xs)
+  (let* ((n (float (length xs)))
+         (mean (/ (apply #'+ xs) n))
+         (sd (sqrt (/ (apply #'+ (mapcar (lambda (x) (expt (- x mean) 2)) xs)) n))))
+    (cons mean sd)))
+
 (ert-deftest dat401-delays-are-human-ish ()
-  ;; Average about 20 characters a second, with longer pauses after spaces.
-  (let* ((line (make-string 400 ?x))
-         (avg (/ (apply #'+ (mapcar #'cdr (dat401--delays line))) 400.0)))
-    (should (< 0.02 avg 0.08)))
-  (let* ((ds (dat401--delays "a b"))
-         (after-space (cdr (nth 2 ds))))
-    (should (>= after-space 0.048))))
+  ;; About 5-10 characters a second over a typical line: not a machine's 20+.
+  (let* ((line "SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;")
+         (all (cl-loop repeat 50 append (mapcar #'cdr (dat401--delays line))))
+         (stats (dat401-test--stats all)))
+    (should (< 0.09 (car stats) 0.22))
+    ;; Uneven: the spread between keys is as big as the average key.
+    (should (> (/ (cdr stats) (car stats)) 0.7)))
+  ;; Some lines are quicker than others.
+  (let ((totals (cl-loop repeat 40 collect
+                         (apply #'+ (mapcar #'cdr (dat401--delays "CREATE TABLE posts ("))))))
+    (should (> (- (apply #'max totals) (apply #'min totals)) 0.8)))
+  ;; A gap after a space, on average.
+  (let ((after-space (cl-loop repeat 200 collect (cdr (nth 2 (dat401--delays "a b")))))
+        (in-word (cl-loop repeat 200 collect (cdr (nth 1 (dat401--delays "ab"))))))
+    (should (> (car (dat401-test--stats after-space)) (* 1.8 (car (dat401-test--stats in-word)))))))
 
 (ert-deftest dat401-delays-scale-with-speed ()
   (let ((dat401-typing-speed 0))
@@ -73,12 +87,14 @@
     (with-temp-file (expand-file-name "f.ts" dir)
       (insert "// header\nimport x;\nimport y;\n\nfunction f() {\n  body;\n  return 1;\n}\n// tail\n"))
     (dat401-code "f.ts" '((2 . 3) (7 . 8)))
-    (with-current-buffer "*code*"
+    ;; Opened like a file: named after it, no header line.
+    (should (equal (buffer-name (window-buffer)) "f.ts"))
+    (with-current-buffer "f.ts"
+      (should (null header-line-format))
       ;; Narrowed to the span: lines 2-8.
       (should (equal (buffer-string)
                      "import x;\nimport y;\n\nfunction f() {\n  body;\n  return 1;\n}\n"))
       (should buffer-read-only)
-      (should (equal dat401--title "f.ts"))
       (cl-flet ((faces-at (s) (save-excursion
                                 (goto-char (point-min)) (search-forward s)
                                 (mapcar (lambda (o) (overlay-get o 'face)) (overlays-at (1- (point)))))))
@@ -86,11 +102,11 @@
         (should (memq 'dat401-code-mark (faces-at "return 1")))
         (should (memq 'dat401-code-dim (faces-at "body")))
         (should-not (memq 'dat401-code-dim (faces-at "import x")))))
-    (should (eq (window-buffer) (get-buffer "*code*")))
-    (should (equal dat401--layout '(code)))
+    (should (equal dat401--layout '(view)))
     ;; Showing another excerpt replaces the first.
     (dat401-code "f.ts" '((5 . 5)))
-    (with-current-buffer "*code*"
+    (should (= 1 (cl-count-if (lambda (b) (string-prefix-p "f.ts" (buffer-name b))) (buffer-list))))
+    (with-current-buffer "f.ts"
       (should (equal (buffer-string) "function f() {\n"))
       (should (= 1 (length (overlays-in (point-min) (point-max))))))
     (delete-directory dir t)))
@@ -125,3 +141,124 @@
     (should (equal (dat401--value "cluster-id" 'a) "e5ugy6wru5xgmpi4lx4e6sxs54"))
     (should (equal (dat401--resolve-static "The cluster endpoint is <cluster-endpoint>; id <cluster-id>.")
                    "The cluster endpoint is e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws; id e5ugy6wru5xgmpi4lx4e6sxs54."))))
+
+(ert-deftest dat401-segments-type-text-and-paste-placeholders ()
+  (should (equal (dat401--segments "export PGHOST=<cluster-id>.dsql.us-west-2.on.aws PGUSER=admin")
+                 '(("export PGHOST=") ("cluster-id" . t) (".dsql.us-west-2.on.aws PGUSER=admin"))))
+  (should (equal (dat401--segments "CALL sys.wait_for_job('<job_id>');")
+                 '(("CALL sys.wait_for_job('") ("job_id" . t) ("');"))))
+  (should (equal (dat401--segments "SELECT 1 WHERE a < b") '(("SELECT 1 WHERE a < b")))))
+
+(ert-deftest dat401-highlights-survive-a-redraw ()
+  ;; vterm redraws by deleting and re-inserting lines. Highlights come back.
+  (let ((dat401--marks nil)
+        (buf (get-buffer-create "*psql A*")))
+    (unwind-protect
+        (let ((out (concat "{\n    \"identifier\": \"e5ugy6wru5xgmpi4lx4e6sxs54\",\n"
+                           "    \"arn\": \"arn:aws:dsql:us-west-2:1:cluster/e5ugy6wru5xgmpi4lx4e6sxs54\",\n"
+                           "    \"endpoint\": \"e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws\"\n}\n"
+                           "❯ export PGHOST=e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws\n")))
+          (with-current-buffer buf (insert out) (setq dat401--this-pane 'a))
+          (cl-flet ((marked () (with-current-buffer buf
+                                 (sort (mapcar (lambda (o) (buffer-substring (overlay-start o) (overlay-end o)))
+                                               (cl-remove-if-not (lambda (o) (eq (overlay-get o 'face) 'dat401-mark))
+                                                                 (overlays-in (point-min) (point-max))))
+                                       #'string<))))
+            (dat401-highlight 'a "identifier")
+            (dat401-highlight 'a "endpoint")
+            (dat401--mark 'a "export PGHOST=\\(e5ugy6wru5xgmpi4lx4e6sxs54\\)")
+            ;; Three: the identifier, the endpoint, and the pasted identifier.
+            ;; Not the ARN.
+            (should (equal (marked) '("e5ugy6wru5xgmpi4lx4e6sxs54" "e5ugy6wru5xgmpi4lx4e6sxs54"
+                                      "e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws")))
+            ;; A redraw replaces the text...
+            (with-current-buffer buf (erase-buffer) (insert out) (dat401--after-redraw))
+            (should (= 3 (length (marked))))
+            ;; ...and clearing removes them for good.
+            (dat401-unhighlight)
+            (should (null (marked)))
+            (with-current-buffer buf (dat401--after-redraw))
+            (should (null (marked)))))
+      (kill-buffer buf))))
+
+(ert-deftest dat401-prompt-opens-like-a-file ()
+  (let ((dat401--vars (make-hash-table :test 'equal)))
+    (puthash "cluster-endpoint" "abc.dsql.us-west-2.on.aws" dat401--vars)
+    (dat401-prompt "Build an API. The cluster endpoint is <cluster-endpoint>.")
+    (should (equal (buffer-name (window-buffer)) "prompt.md"))
+    (with-current-buffer "prompt.md"
+      (should (null header-line-format))
+      (should (string-match-p "endpoint is abc.dsql.us-west-2.on.aws" (buffer-string)))
+      (should-not (string-match-p "AI prompt" (buffer-string))))))
+
+(ert-deftest dat401-highlight-dpu-total ()
+  (let ((dat401--marks nil)
+        (buf (get-buffer-create "*psql A*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buf
+            (insert " Statement DPU Estimate:\n   Compute: 0.2 DPU\n   Total: 120.76381 DPU\n"
+                    "postgres=> \n ...\n   Total: 0.04708 DPU\npostgres=> ")
+            (setq dat401--this-pane 'a))
+          (dat401-highlight 'a "dpu")
+          (with-current-buffer buf
+            ;; The latest EXPLAIN's total.
+            (should (equal (mapcar (lambda (o) (buffer-substring (overlay-start o) (overlay-end o)))
+                                   dat401--mark-overlays)
+                           '("Total: 0.04708 DPU"))))
+          ;; The next command clears it (no pane needed: nothing typed in batch).
+          (cl-letf (((symbol-function 'dat401--start) #'ignore)
+                    ((symbol-function 'dat401--type) #'ignore)
+                    ((symbol-function 'select-window) #'ignore)
+                    ((symbol-function 'get-buffer-window) #'ignore))
+            (dat401-run 'a "select 1;"))
+          (should (null dat401--marks))
+          (with-current-buffer buf (should (null dat401--mark-overlays))))
+      (kill-buffer buf))))
+
+(ert-deftest dat401-copy-from-screen-acts-it-out ()
+  ;; Up to the id's line, along it word by word, select exactly the id, then
+  ;; back. vterm's copy mode is stubbed: there's no terminal in batch.
+  (let* ((buf (get-buffer-create "*psql A*"))
+         (id "bk7zsxu5xjh6pgsaskjqxpb5ty")
+         (seen '()) (dat401--hurry nil) (dat401--copies 0) (copy-mode '())
+         (transient-mark-mode t))                                 ; batch Emacs has it off
+    (unwind-protect
+        (progn
+          (switch-to-buffer buf)
+          (insert "postgres=> create index async x on t (y);\n"
+                  "           job_id           \n----------------------------\n"
+                  " " id "\n(1 row)\n\npostgres=> call sys.wait_for_job('")
+          (cl-letf (((symbol-function 'vterm-copy-mode) (lambda (on) (push on copy-mode)))
+                    ((symbol-function 'dat401--sleep)
+                     (lambda (_) (push (list (point) (and (region-active-p)
+                                                          (buffer-substring (region-beginning) (region-end))))
+                                       seen))))
+            (should (dat401--copy-from-screen 'a id))
+            (should (null (dat401--copy-from-screen 'a "notonscreenatallxxxxxxxxx"))))
+          (setq seen (nreverse seen))
+          (should (equal (reverse copy-mode) '(1 -1)))            ; in and out of copy mode
+          (should (= dat401--copies 1))
+          ;; It passed through the id's line before selecting.
+          (let ((id-start (save-excursion (goto-char (point-min)) (search-forward id) (match-beginning 0))))
+            (should (cl-some (lambda (s) (= (car s) id-start)) seen)))
+          ;; At one point exactly the id was selected; at the end, nothing is.
+          (should (cl-some (lambda (s) (equal (cadr s) id)) seen))
+          (should-not (region-active-p)))
+      (kill-buffer buf))))
+
+(ert-deftest dat401-copy-context-picks-the-identifier-line ()
+  (let ((buf (get-buffer-create "*psql A*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (insert "{\n    \"identifier\": \"e5ugy6wru5xgmpi4lx4e6sxs54\",\n"
+                  "    \"arn\": \"arn:aws:dsql:us-west-2:1:cluster/e5ugy6wru5xgmpi4lx4e6sxs54\",\n"
+                  "    \"endpoint\": \"e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws\"\n}\n❯ export PGHOST=")
+          (let ((pos (dat401--find-on-screen buf "e5ugy6wru5xgmpi4lx4e6sxs54" "\"identifier\": \"")))
+            (goto-char pos)
+            (should (looking-back "\"identifier\": \"" (line-beginning-position)))))
+      (kill-buffer buf))))
+
+(ert-deftest dat401-ids-are-never-typed ()
+  (should (dat401--id-like-p "bk7zsxu5xjh6pgsaskjqxpb5ty"))
+  (should-not (dat401--id-like-p "dat401-cdc")))

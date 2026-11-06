@@ -10,14 +10,29 @@ import generate  # noqa: E402
 class Clean(unittest.TestCase):
     def test_strips_sql_comments(self):
         text = "-- both panes, one line at a time\nSELECT 1;   -- note\nSELECT '--not a comment';"
-        self.assertEqual(generate.clean_command(text, "sql"), "SELECT 1;\nSELECT '--not a comment';")
+        self.assertEqual(generate.clean_command(text, "sql"), "select 1;\nselect '--not a comment';")
 
     def test_strips_shell_comments(self):
         self.assertEqual(generate.clean_command("cd demo   # go\n# only a comment\nls", "sh"), "cd demo\nls")
 
+    def test_sql_is_typed_in_lower_case_except_quotes(self):
+        self.assertEqual(generate.clean_command(
+            "INSERT INTO posts (title) VALUES ('Hello, DSQL') RETURNING \"Id\";", "sql"),
+            "insert into posts (title) values ('Hello, DSQL') returning \"Id\";")
+        self.assertEqual(generate.clean_command("CALL sys.wait_for_job('<job_id>');", "sql"),
+                         "call sys.wait_for_job('<job_id>');")
+        self.assertEqual(generate.clean_command("SELECT * FROM t WHERE m->>'Category' = 'Rust' \\gset", "sql"),
+                         "select * from t where m->>'Category' = 'Rust' \\gset")
+        # Shell keeps its case.
+        self.assertEqual(generate.clean_command("export PGHOST=X", "sh"), "export PGHOST=X")
+
+    def test_typed_lines_lose_their_indentation(self):
+        self.assertEqual(generate.clean_command("CREATE TABLE t (\n  id uuid PRIMARY KEY,\n  x text\n);", "sql"),
+                         "create table t (\nid uuid primary key,\nx text\n);")
+
     def test_rehearsal_job_ids_become_placeholders(self):
         self.assertEqual(generate.clean_command("CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');", "sql"),
-                         "CALL sys.wait_for_job('<job_id>');")
+                         "call sys.wait_for_job('<job_id>');")
 
 
 class Panes(unittest.TestCase):
@@ -56,6 +71,29 @@ class Excerpt(unittest.TestCase):
             generate.excerpt_ranges("import x;\nfunction f() {", self.SRC)
 
 
+class Cues(unittest.TestCase):
+    def test_directions(self):
+        self.assertEqual(generate.cue_form("highlight identifier", "a", 1), "(dat401-highlight 'a \"identifier\")")
+        self.assertEqual(generate.cue_form("clear", "a", 1), "(dat401-unhighlight)")
+        self.assertEqual(generate.cue_form("open pane B", "a", 1), "(dat401-open 'b)")
+        self.assertEqual(generate.cue_form("close pane shell", "a", 1), "(dat401-close 'shell)")
+        self.assertEqual(generate.cue_form("highlight dpu", "a", 1), "(dat401-highlight 'a \"dpu\")")
+
+    def test_close_rides_along_with_the_next_command(self):
+        step = {"beats": [
+            {"kind": "RUN", "target": "shell", "command": "./sql/05-load-sample-data.sh",
+             "elems": [{"kind": "code", "lang": "sh"}], "line": 1},
+            {"kind": "CUE", "target": "close pane shell", "line": 2},
+            {"kind": "RUN", "target": "psql", "command": "EXPLAIN SELECT 1;",
+             "elems": [{"kind": "code", "lang": "sql"}], "line": 3},
+        ]}
+        forms = generate.step_forms(step)
+        self.assertEqual(len(forms), 2)
+        self.assertEqual(forms[1][2], "(progn (dat401-close 'shell) (dat401-run 'a \"explain select 1;\"))")
+        with self.assertRaises(SystemExit):
+            generate.cue_form("highlight", "a", 1)
+
+
 class Elisp(unittest.TestCase):
     def test_string_escaping(self):
         self.assertEqual(generate.el('a "b" \\gset'), '"a \\"b\\" \\\\gset"')
@@ -66,9 +104,16 @@ class RealTalk(unittest.TestCase):
         talk = generate.load_talk()
         out = generate.generate(talk)
         cmds = [b for p in talk["parts"] if p["talk"] for s in p["steps"] if s["talk"]
-                for b in s["beats"] if b["kind"] in ("RUN", "RACE", "PROMPT", "SHOW")]
-        self.assertEqual(out.count("(dat401-run ") + out.count("(dat401-prompt ") + out.count("(dat401-code "),
+                for b in s["beats"] if b["kind"] in ("RUN", "RACE", "PROMPT", "SHOW", "CUE")]
+        self.assertEqual(out.count("(dat401-run ") + out.count("(dat401-paste ") + out.count("(dat401-prompt ")
+                         + out.count("(dat401-code ") + out.count("(dat401-highlight ")
+                         + out.count("(dat401-unhighlight)") + out.count("(dat401-open ")
+                         + out.count("(dat401-close "),
                          len(cmds))
+        self.assertEqual(out.count("(dat401-highlight 'a \"dpu\")"), 5)
+        self.assertNotIn("(dat401-key ", out)                # no banners: it should look live
+        self.assertIn("(dat401-paste 'b \"export PGHOST=<cluster-id>", out)
+        self.assertIn("(dat401-highlight 'a \"identifier\")", out)   # step 1
         self.assertIn('(dat401-code "demo/api/src/db.ts"', out)   # step 4
         self.assertIn("(dat401-layout 'a 'b)", out)          # the race
         self.assertNotIn("sdtn7gjobfeglgjbysgk3pog4i", out)  # rehearsal job id replaced
