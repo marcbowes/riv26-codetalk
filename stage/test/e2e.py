@@ -126,7 +126,7 @@ def main():
         ("tables created", a.count("CREATE TABLE") >= 3),
         ("step 4 code shown", "db.transactionWithRetry(" in read(out, "code.txt")),
         ("step 4 prompt typed into the agent, never submitted",
-         read(out, "agent.txt").count("build a TypeScript API for my blog") == 1),
+         read(out, "agent.txt").count("build a typescript api for my blog") == 1),
         ("real schema loaded with \\i", "INSERT 0 1" in a),
         ("loader ran in the shell pane", "Done in" in shell),
         ("bad plan shown (full scan + sort)", "top-N heapsort" in a),

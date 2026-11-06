@@ -80,6 +80,11 @@ minute over a line, unevenly), 0.5 twice as fast, 0 instant."
   "What step 4 types to start the AI agent in its frame."
   :type 'string)
 
+(defcustom dat401-agent-typing-speed 0.45
+  "Typing delays for the AI prompt, relative to `dat401-typing-speed'.
+Prose goes in faster than SQL."
+  :type 'number)
+
 (defcustom dat401-agent-ready "shift\\+tab to cycle\\|for shortcuts"
   "Seen in the agent's frame once it's ready for a prompt."
   :type 'regexp)
@@ -345,7 +350,8 @@ ever sent (paragraphs are typed as one), and `dat401-quit-agent' closes it."
   (dat401--wait-for (lambda () (string-match-p dat401-agent-ready (dat401--pane-text 'claude))) 30)
   (setq dat401--hurry nil)
   (dat401--sleep (dat401--pause 1500 0.3))
-  (let ((text (replace-regexp-in-string "[ \t]*\n[ \t\n]*" " " (string-trim text))))
+  (let ((text (replace-regexp-in-string "[ \t]*\n[ \t\n]*" " " (string-trim text)))
+        (dat401-typing-speed (* dat401-typing-speed dat401-agent-typing-speed)))
     (dolist (cd (dat401--delays text))
       (dat401--send 'claude (car cd))
       (dat401--sleep (cdr cd))))

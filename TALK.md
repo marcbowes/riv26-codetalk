@@ -320,16 +320,10 @@ for it. It has the Aurora DSQL skill installed, which is the only DSQL-specific
 setup here:
 
 ```prompt
-In ./blog, build a TypeScript API for my blog on Aurora DSQL using Drizzle ORM.
-The cluster endpoint is in $PGHOST; connect as admin. The tables already
-exist: read the schema from the database.
-
-Operations: ListPosts (newest first, with author), GetPost (with its comments
-and each commenter's username), CreatePost, AddComment.
-
-Give me an HTTP server and a small CLI that calls it over HTTP. Start the server
-and use the CLI to check that every operation works.
+in ./blog build a typescript api for my blog on aurora dsql w/ drizzle orm. cluster endpoint is in $PGHOST, connect as admin. tables already exist so just read teh schema from the db. ops: list posts (newest first w/ author), get post (with its comments + each comenters username), create post, add comment. give me an http server and a small cli that calls it over http. then start the server and use the cli to chcek every op works
 ```
+
+*(Typed the way people actually prompt, typos included. The agent doesn't mind.)*
 
 I'm not going to submit that. I did it earlier, so you don't have to wait for
 it. There's nothing DSQL-specific in the prompt beyond the word "DSQL": the
