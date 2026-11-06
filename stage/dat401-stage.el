@@ -71,7 +71,9 @@ AWS settings always; psql settings once cluster A is known."
    (list (concat "AWS_PROFILE=" dat401-aws-profile)
          (concat "AWS_REGION=" dat401-aws-region)
          ;; No pager: EXPLAIN plans should just print.
-         "PSQL_PAGER=cat" "PAGER=cat")
+         "PSQL_PAGER=cat" "PAGER=cat"
+         ;; No zsh "%" partial-line marker when vterm resizes a new pane.
+         "PROMPT_EOL_MARK=")
    (when-let* ((id (gethash "cluster-A-id" dat401--vars)))
      (list (format "PGHOST=%s.dsql.%s.on.aws" id dat401-aws-region)
            "PGUSER=admin" "PGDATABASE=postgres" "PGSSLMODE=require"))
