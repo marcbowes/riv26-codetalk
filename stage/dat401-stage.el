@@ -80,6 +80,7 @@ AWS settings always; psql settings once cluster A is known."
    process-environment))
 
 (defvar-local dat401--this-pane nil "Which pane this buffer is.")
+(defvar-local dat401--fresh nil "Non-nil until a new pane's shell has drawn its first prompt.")
 (defvar-local dat401--title nil "Header title, if not the pane's (e.g. a file name).")
 
 (defun dat401--header ()
@@ -97,7 +98,8 @@ AWS settings always; psql settings once cluster A is known."
           (save-window-excursion
             (let ((buf (vterm name)))
               (with-current-buffer buf
-                (setq dat401--this-pane pane)
+                (setq dat401--this-pane pane
+                      dat401--fresh t)
                 (text-scale-set dat401-text-scale)
                 (setq-local header-line-format '(:eval (dat401--header))))
               buf))))))
@@ -122,7 +124,24 @@ AWS settings always; psql settings once cluster A is known."
       (`(a events) (set-window-buffer (split-window-right) (dat401--pane 'events)))
       (`(a shell) (set-window-buffer (split-window-below (- (floor (window-total-height) 3)))
                                      (dat401--pane 'shell))))
-    (setq dat401--layout panes)))
+    (setq dat401--layout panes)
+    (dat401--tidy panes)))
+
+(defun dat401--tidy (panes)
+  "Clear the PANES that sit at a shell prompt, once they've settled at their
+new size. A resize makes the shell redraw its prompt, which leaves stray
+lines (and a new pane draws its first prompt at whatever size it started
+at). Panes in psql or running something are left alone."
+  (redisplay t)
+  (dolist (p panes)
+    (when (buffer-local-value 'dat401--fresh (dat401--pane p))
+      (dat401--wait-for (lambda () (dat401--shell-prompt-p p)) 5)
+      (with-current-buffer (dat401--pane p) (setq dat401--fresh nil))))
+  (sit-for 0.4)
+  (dolist (p panes)
+    (when (dat401--shell-prompt-p p)
+      (with-current-buffer (dat401--pane p) (vterm-clear))))
+  (sit-for 0.2))
 
 (defun dat401--show (pane)
   "Make sure PANE is on screen, switching layout if needed."
@@ -418,6 +437,21 @@ wait after the last line: it may start something that keeps running."
   (interactive)
   (dat401-stage-mode -1)
   (demo-it-disable-mode))
+
+(defun dat401-reset ()
+  "Leave the demo, close every pane (ending their psql sessions) and forget
+placeholder values like the cluster ID. The next `dat401-start' starts clean."
+  (interactive)
+  (ignore-errors (dat401-stop))
+  (dolist (name (append (mapcar (lambda (p) (dat401--buffer-name (car p))) dat401--pane-titles)
+                        '("*code*") dat401--overlay-buffers))
+    (when-let* ((buf (get-buffer name)))
+      (when-let* ((proc (get-buffer-process buf)))
+        (set-process-query-on-exit-flag proc nil))
+      (kill-buffer buf)))
+  (clrhash dat401--vars)
+  (setq dat401--layout nil dat401--section "")
+  (message "DAT401: reset. M-x dat401-start to begin again"))
 
 (provide 'dat401-stage)
 ;;; dat401-stage.el ends here

@@ -49,11 +49,13 @@ M-x dat401-start
 | `C-u N F12` | Run step N |
 | `C-F12` or `M-x dat401-goto` | Jump to a talk step by name. The next F12 runs its first command |
 | `M-x dat401-stop` | Leave demo mode. The panes stay open |
+| `M-x dat401-reset` | Close every pane and forget the cluster ID, for a clean `dat401-start` (rehearsals) |
 
 The first time a command needs `<cluster-A-id>`, `<kinesis-stream>` or
 another placeholder, the minibuffer asks for it once and remembers it.
 `<job_id>` is never asked for: it's read from the `CREATE INDEX ASYNC` output
-on screen. To use a new cluster, set it before you start:
+on screen. The first F12 in step 1 asks for `cluster-A-id`: paste it from the
+console. To set it ahead of time instead:
 `(puthash "cluster-A-id" "abc..." dat401--vars)`.
 
 Typing waits for each statement or shell command to finish before it types
