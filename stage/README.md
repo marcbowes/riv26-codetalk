@@ -15,8 +15,10 @@ talk; it types.
   foreign key race shows A and B side by side. The loader shows A with a
   shell along the bottom.
 - **★ DSQL difference** callouts become a yellow banner across the top.
-- **AI prompts** open in a side window, next to what the prompt produced. The
-  prompt is also copied to the clipboard.
+- **Code** fills the screen: the real file, narrowed to the excerpt TALK.md
+  shows, with the excerpt's lines highlighted and the lines between them
+  dimmed. Step 4 does this for `demo/api`.
+- **The AI prompt** in step 4 opens in a side window.
 - **The header line** names the current talk step.
 
 `speaker/` still works as the teleprompter on a second screen. This replaces
@@ -83,6 +85,10 @@ command and where it runs. A fence's info string picks the pane:
 - ```` ```sh both panes ```` and ```` ```sql both panes ```` go to A, then B.
 - ```` ```sh ```` goes to the shell. Commands that start with `./events/` go
   to the events pane, and commands that run `loadgen` go to the load pane.
+- ```` ```ts demo/api/src/db.ts ```` (any language, then a path) is a code
+  excerpt. It's shown, not typed. Its lines must appear in the file verbatim
+  and in order. A `...` line skips ahead. The generator fails if an excerpt
+  no longer matches its file.
 - ```` ```text ```` is expected output. It's never typed.
 
 Comment lines and trailing comments are dropped before typing. A literal
@@ -96,7 +102,7 @@ emacs -Q --batch -L $B/demo-it -L $B/vterm -L stage -l stage/test/dat401-test.el
 python3 -m unittest discover -s stage/test
 
 # End to end: real Doom Emacs in a pty, against an empty scratch cluster.
-# Runs the intro through step 6 (schema, loader, EXPLAIN, both async
-# indexes) and checks what the panes show.
-DAT401_E2E_CLUSTER=<id> python3 stage/test/e2e.py 1-27
+# Runs the intro through step 6 (schema, step 4's code, loader, EXPLAIN,
+# both async indexes) and checks what the panes show.
+DAT401_E2E_CLUSTER=<id> python3 stage/test/e2e.py
 ```

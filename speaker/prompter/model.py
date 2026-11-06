@@ -15,8 +15,9 @@ EXPECT = "EXPECT"    # expected output that doesn't follow a command
 KEY = "KEY"          # a ★ key message that must be said
 TABLE = "TABLE"      # a table
 RACE = "RACE"        # one row of a Pane A / Pane B table
+SHOW = "SHOW"        # a code excerpt put on screen, not run (target: its file)
 
-BEAT_KINDS = (SAY, RUN, PROMPT, EXPECT, KEY, TABLE, RACE)
+BEAT_KINDS = (SAY, RUN, PROMPT, EXPECT, KEY, TABLE, RACE, SHOW)
 
 
 @dataclass
@@ -71,7 +72,7 @@ class Elem:
 class Beat:
     kind: str
     elems: List[Elem] = field(default_factory=list)
-    target: str = ""          # psql, shell, AI agent, psql · Pane B ...
+    target: str = ""          # psql, shell, AI agent, psql · Pane B, or SHOW's file
     command: str = ""         # what `c` copies
     expect: str = ""          # expected output attached to a command
     readers: List[Elem] = field(default_factory=list)  # hidden follow-along notes
@@ -85,6 +86,8 @@ class Beat:
     def summary(self, width: int = 70) -> str:
         if self.kind in (RUN, PROMPT):
             text = self.command
+        elif self.kind == SHOW:
+            text = self.target
         elif self.kind == RACE:
             text = self.command or self.elems[0].plain()
         elif self.kind == KEY:

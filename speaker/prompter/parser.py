@@ -17,7 +17,7 @@ import re
 from typing import List, Optional, Tuple
 
 from . import inline
-from .model import (EXPECT, KEY, PROMPT, RACE, RUN, SAY, TABLE, Beat, Elem,
+from .model import (EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE, Beat, Elem,
                     Part, Step, Talk)
 from .timing import RANGE_FULL_RE, parse_range
 
@@ -461,6 +461,14 @@ def _code_target(lang: str, info: str, text: str, prev: Optional[Block]) -> str:
     return target
 
 
+def show_path(info: str) -> str:
+    """The file in a code-excerpt fence's info string (```ts demo/api/src/db.ts),
+    or "". Only a path (a second word with a /) makes a fence an excerpt, so
+    targets like ```sql pane B are never mistaken for one."""
+    words = info.split()
+    return words[1] if len(words) > 1 and "/" in words[1] else ""
+
+
 def unwrap_prompt(text: str) -> str:
     """Join hard-wrapped lines inside each paragraph of a prompt, so pasting
     it into an agent doesn't send early. Blank lines are kept."""
@@ -571,6 +579,10 @@ def build_beats(blocks: List[Block], warnings: List[str], where: str) -> Tuple[L
                     warnings.append(
                         "%s line %d: plain ``` block that doesn't follow a command: shown as "
                         "standalone EXPECT" % (where, b.line))
+            elif show_path(b.info):
+                # ```ts demo/api/src/db.ts: an excerpt of a file, shown, not run.
+                add(Beat(SHOW, elems=[Elem("code", lang=b.lang, text=b.text, line=b.line)],
+                         target=show_path(b.info), line=b.line))
             else:
                 kind = PROMPT if b.lang in PROMPT_LANGS else RUN
                 if b.lang not in LANG_TARGET:

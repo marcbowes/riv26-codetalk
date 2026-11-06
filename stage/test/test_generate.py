@@ -36,6 +36,25 @@ class Panes(unittest.TestCase):
         self.assertEqual(generate.layout_for(["load"]), ["load"])
 
 
+class Excerpt(unittest.TestCase):
+    SRC = "a\nimport x;\nimport y;\n\nfunction f() {\n  body;\n  return 1;\n}\n"
+
+    def test_consecutive_lines(self):
+        self.assertEqual(generate.excerpt_ranges("import x;\nimport y;", self.SRC), [(2, 3)])
+
+    def test_elision_skips_ahead(self):
+        self.assertEqual(generate.excerpt_ranges("import x;\n// ...\n  return 1;\n}", self.SRC),
+                         [(2, 2), (7, 8)])
+
+    def test_drift_fails(self):
+        with self.assertRaises(generate.ExcerptError):
+            generate.excerpt_ranges("import z;", self.SRC)
+        with self.assertRaises(generate.ExcerptError):   # out of order
+            generate.excerpt_ranges("import y;\n...\nimport x;", self.SRC)
+        with self.assertRaises(generate.ExcerptError):   # not consecutive without an elision
+            generate.excerpt_ranges("import x;\nfunction f() {", self.SRC)
+
+
 class Elisp(unittest.TestCase):
     def test_string_escaping(self):
         self.assertEqual(generate.el('a "b" \\gset'), '"a \\"b\\" \\\\gset"')
@@ -46,8 +65,10 @@ class RealTalk(unittest.TestCase):
         talk = generate.load_talk()
         out = generate.generate(talk)
         cmds = [b for p in talk["parts"] if p["talk"] for s in p["steps"] if s["talk"]
-                for b in s["beats"] if b["kind"] in ("RUN", "RACE", "PROMPT")]
-        self.assertEqual(out.count("(dat401-run ") + out.count("(dat401-prompt "), len(cmds))
+                for b in s["beats"] if b["kind"] in ("RUN", "RACE", "PROMPT", "SHOW")]
+        self.assertEqual(out.count("(dat401-run ") + out.count("(dat401-prompt ") + out.count("(dat401-code "),
+                         len(cmds))
+        self.assertIn('(dat401-code "demo/api/src/db.ts"', out)   # step 4
         self.assertIn("(dat401-layout 'a 'b)", out)          # the race
         self.assertNotIn("sdtn7gjobfeglgjbysgk3pog4i", out)  # rehearsal job id replaced
 

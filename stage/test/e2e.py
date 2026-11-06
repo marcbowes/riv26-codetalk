@@ -2,12 +2,13 @@
 """End-to-end: run generated demo-it steps in a real (terminal) Emacs with vterm
 against a real cluster, then check what the panes show.
 
-    DAT401_E2E_CLUSTER=<cluster-id> AWS_PROFILE=bowes python3 stage/test/e2e.py [1-27]
+    DAT401_E2E_CLUSTER=<cluster-id> AWS_PROFILE=bowes python3 stage/test/e2e.py [FROM-TO]
 
 Uses your normal Emacs config (Doom), so vterm and demo-it come from there.
-Steps 1-27 are the talk from the intro through step 6 (the schema, the
-loader, EXPLAIN, and both async indexes, with <job_id> filled in from the
-pane's own output). The cluster should be empty: step 1 creates the tables.
+By default it runs the talk from the intro through step 6 (the schema, the
+step 4 code views, the loader, EXPLAIN, and both async indexes, with <job_id>
+filled in from the pane's own output). The cluster should be empty: step 1
+creates the tables.
 """
 import fcntl
 import os
@@ -27,6 +28,8 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 def run(steps, timeout=900):
     out = tempfile.mkdtemp(prefix="dat401-e2e-")
     env = dict(os.environ, DAT401_E2E_STEPS=steps, DAT401_E2E_OUT=out, TERM="xterm-256color")
+    if not steps:
+        env.pop("DAT401_E2E_STEPS")
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(REPO)
@@ -59,7 +62,7 @@ def read(out, name):
 
 
 def main():
-    steps = sys.argv[1] if len(sys.argv) > 1 else "1-27"
+    steps = sys.argv[1] if len(sys.argv) > 1 else ""
     if not os.environ.get("DAT401_E2E_CLUSTER"):
         sys.exit("set DAT401_E2E_CLUSTER to an empty scratch cluster's id")
     out, status = run(steps)
@@ -71,6 +74,7 @@ def main():
         ("finished", bool(read(out, "done.txt"))),
         ("both panes connected to psql", "postgres=>" in a and "postgres=>" in b),
         ("tables created", a.count("CREATE TABLE") >= 3),
+        ("step 4 code shown", "db.transactionWithRetry(" in read(out, "code.txt")),
         ("identity-column error shown", "explicit cache size" in a),
         ("real schema loaded with \\i", "INSERT 0 1" in a),
         ("loader ran in the shell pane", "Done in" in shell),

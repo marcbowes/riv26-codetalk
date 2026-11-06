@@ -58,7 +58,7 @@ Timing, staging, and what to do if something goes wrong.
 | Time | Part |
 |---|---|
 | 0:00–5:00 | Intro: what DSQL is, the agenda |
-| 5:00–35:00 | Build it: steps 1–12 (console, psql, AI agent) |
+| 5:00–35:00 | Build it: steps 1–11 (console, psql) |
 | 35:00–40:00 | The polished app, in two Regions |
 | 40:00–44:00 | Scale: 20,000 requests per second |
 | 44:00–45:00 | Wrap-up |
@@ -70,15 +70,10 @@ You need:
   parts also use us-east-1, with us-east-2 as the witness.
 - **AWS CLI v2** (with `aws dsql`), **psql** (16 or newer), **jq**, and this repo:
   `git clone https://github.com/marcbowes/riv26-codetalk && cd riv26-codetalk`
-- **Optional: an AI coding agent with the Aurora DSQL skill** (step 1; step 4 shows the prompt used to build the API):
-  - Kiro: the [Aurora DSQL power](https://kiro.dev/launch/powers/add/?name=amazon-aurora-dsql).
-  - Claude Code: `/plugin marketplace add awslabs/agent-plugins`, then
-    `/plugin install databases-on-aws@agent-plugins-for-aws`.
-  - Others: `npx skills add https://github.com/awslabs/agent-plugins --skill dsql`.
-  - Every AI step also has a no-agent alternative.
+- **Optional: Node.js**, to run the API from step 4 yourself (`demo/api`).
 - **Optional: Rust** (`cargo`), to build the CDC viewer in `events/`.
 
-Cost: steps 1–12 cost cents. The polished app (`demo/`) runs CloudFront,
+Cost: steps 1–11 cost cents. The polished app (`demo/`) runs CloudFront,
 Lambda, two clusters and an EC2 host. Tear it down with `demo/destroy.sh`
 when you're done. [Cleaning up](#cleaning-up) covers everything.
 
@@ -102,7 +97,7 @@ and down to zero without it. It's also active-active across Regions.
 
 Last year this talk spent 45 minutes on connection pools and retry loops.
 This year we skip all that. We'll build a blog: a small schema, some queries,
-an API written by an AI agent, and a web page. While we do, I'll show you the
+an API, and a web page. While we do, I'll show you the
 handful of places where a distributed database behaves differently from the
 PostgreSQL on your laptop, and why those differences are good news. Then we'll
 see the finished app in two Regions, and throw 20,000 requests a second at it.
@@ -113,7 +108,7 @@ see the finished app in two Regions, and throw 20,000 requests a second at it.
 - About two slides. The agenda slide mirrors the run-of-show table.
 - Have open, logged in:
   - the DSQL console (us-west-2);
-  - five terminals: psql A, psql B, Kiro ×2, events;
+  - Emacs, with `M-x dat401-start` run (see [`stage/`](stage));
   - the demo site;
   - the CloudWatch dashboard.
 - Ran `demo/preflight.sh` about 30 minutes ago and it said Ready.
@@ -132,17 +127,8 @@ There's no instance size, no storage to provision, no engine version, no
 maintenance window. It's ready in about the time it took to read this
 sentence. We'll call it cluster A.
 
-**Create a second one with an AI agent.** I'll ask my agent for another cluster.
-It has the DSQL skill installed, which is the only DSQL-specific setup in this
-whole talk:
-
-```prompt
-Create a new Aurora DSQL cluster in us-west-2 and tell me its endpoint.
-```
-
-> No agent? `aws dsql create-cluster --region us-west-2` does the same.
-
-That's cluster B. Remember it; it comes back later.
+**Then a second one, the same way.** That's cluster B. We won't touch it
+until step 9.
 
 **Connect with psql.** Notice what's missing:
 
@@ -243,9 +229,10 @@ scale without limit; comments across *all* posts do, and they still spread out.
 <details>
 <summary>Presenter notes</summary>
 
-- Typed, not pasted: [`sql/00-by-hand.sql`](sql/00-by-hand.sql) is the cheat sheet.
-- Open psql in pane B now too (same exports), ready for step 7.
-- Note whether the console defaulted deletion protection on (it matters in step 9).
+- demo-it types it. [`sql/00-by-hand.sql`](sql/00-by-hand.sql) is the same schema.
+- The connect block runs in both panes, so pane B is ready for step 7.
+- Create both clusters in the console before switching to Emacs. Leave
+  deletion protection on for B: step 9 turns it off.
 </details>
 
 ### Step 2 · Some rows · 9:00–10:30
@@ -302,23 +289,59 @@ and each commenter's username), CreatePost, AddComment.
 Give me an HTTP server and a small CLI that calls it over HTTP. Start the server
 and use the CLI to check that every operation works.
 ```
-```text
-import { drizzle } from '@aws/aurora-dsql-drizzle';
-export const db = drizzle({ connection: { host, user: 'admin', region }, schema });
-...
-const c = await db.transactionWithRetry(async (tx) => { /* check the post, insert the comment */ });
-```
 
 There's nothing DSQL-specific in that prompt beyond the word "DSQL". The skill
-supplies the rest. It came back with the
-[DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
-`@aws/aurora-dsql-drizzle`, with IAM auth through the connector (no passwords),
-and `db.transactionWithRetry(...)` around every write. I'll explain why that
-retry matters in step 7. We won't wait for an agent on stage: you'll see a
-finished version of the app at 35:00.
+supplies the rest. Here's the code it leads to, as it runs in the finished app
+at 35:00. First, the connection:
 
-> No agent? [`demo/api`](demo/api) is a finished version of this API, written for
-> the same schema:
+```ts demo/api/src/db.ts
+import { drizzle } from "@aws/aurora-dsql-drizzle";
+import { AuroraDSQLPool } from "@aws/aurora-dsql-node-postgres-connector";
+...
+export function createDb({ host, user, max }: DbOptions) {
+  const pool = new AuroraDSQLPool({
+    host,
+    user,
+    max,
+    // DSQL closes connections after 60 minutes. Recycle well before that.
+    maxLifetimeSeconds: 50 * 60,
+...
+  return drizzle({ client: pool, schema });
+}
+```
+
+That's the
+[DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
+`@aws/aurora-dsql-drizzle`, on the DSQL connector for node-postgres. The
+connector makes a fresh IAM token for each new connection, so there's no
+password anywhere: not in the code, not in an environment variable.
+
+Then every write:
+
+```ts demo/api/src/queries.ts
+export async function addComment(
+...
+  return db.transactionWithRetry(
+    async (tx) => {
+      const [post] = await tx.select({ id: posts.id }).from(posts).where(eq(posts.id, postId));
+      if (!post) throw new HttpError(404, "post not found");
+...
+      const [row] = await tx
+        .insert(comments)
+        .values({ postId, userId: user.id, body: input.body })
+...
+    },
+    undefined,
+    WRITE_RETRY,
+  );
+}
+```
+
+`db.transactionWithRetry(...)` runs the whole transaction again if it loses a
+conflict. Why a database would make you do that is step 7.
+
+> Following along: [`demo/api`](demo/api) is this API, written for the same
+> schema. To run it against your cluster:
 > ```sh
 > cd demo && npm install
 > CLUSTER_ENDPOINT=$PGHOST DB_USER=admin npm run dev:api     # http://localhost:3000
@@ -327,10 +350,12 @@ finished version of the app at 35:00.
 <details>
 <summary>Presenter notes</summary>
 
-- Shown, not run. In the first dry run Kiro took about 11 minutes. Its first
-  version used plain `drizzle-orm` with the connector and needed a nudge toward
-  `@aws/aurora-dsql-drizzle`, and its CLI called the database directly (hence
-  "calls it over HTTP" in the prompt).
+- F12 shows the prompt, then `db.ts`, then `queries.ts`: the real files, with
+  the lines above highlighted.
+- The prompt is shown, not run. In the first dry run Kiro took about 11
+  minutes. Its first version used plain `drizzle-orm` with the connector and
+  needed a nudge toward `@aws/aurora-dsql-drizzle`, and its CLI called the
+  database directly (hence "calls it over HTTP" in the prompt).
 </details>
 
 ### Step 5 · A million rows, and a bad plan · 13:00–17:00
@@ -350,9 +375,8 @@ Done in 15s
 ```
 
 That's 1.1 million rows in 15 seconds, generated inside the database with
-`generate_series`, so nothing big crosses the network. It started life as the
-script my agent wrote in rehearsal. Look at the batch size: 3,000 rows per
-transaction.
+`generate_series`, so nothing big crosses the network. Look at the batch size
+in that first line: 3,000 rows per transaction.
 
 > **★ DSQL difference: transactions are bounded.** A transaction can modify
 > at most 3,000 rows and 10 MiB, and can run for at most 5 minutes. Bulk loads
@@ -671,23 +695,23 @@ index, or model it as rows.
 ### Step 9 · Scale to zero · 27:00–29:00
 
 Before change data capture, let's tidy up. In the console there are **two**
-clusters. Cluster B, the one the agent made in step 1, has never been used. Its
+clusters. Cluster B, the second one from step 1, has never been used. Its
 monitoring shows nothing at all: no DPUs, no instance ticking over.
 
 > **★ DSQL difference: idle costs nothing.** There's no instance to keep
 > warm. A cluster that isn't doing work bills only for its storage, which for
 > cluster B is nothing.
 
-We don't need it, so let's delete it. The console won't let me yet: clusters
-created through the API have deletion protection on by default. Turn it off,
-then delete. That's exactly what it's for.
+We don't need it, so let's delete it. The console won't let me yet, because
+deletion protection is on. Turn it off, then delete. That's exactly what it's
+for.
 
 <details>
 <summary>Presenter notes</summary>
 
-- Delete **B**, the agent's cluster, not A. A has the blog, and step 10 needs it.
-- If B's deletion protection is off (depends how the agent created it), skip
-  the protection line or show where the setting lives.
+- Delete **B**, not A. A has the blog, and step 10 needs it.
+- If B's deletion protection is off, skip the protection line or show where
+  the setting lives.
 - **Following along:** `aws dsql update-cluster --identifier <B> --no-deletion-protection-enabled`,
   then `aws dsql delete-cluster --identifier <B>`.
 </details>

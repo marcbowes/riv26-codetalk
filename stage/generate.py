@@ -9,7 +9,13 @@ agree on what a command is and where it runs. Each talk step becomes:
 
     a section + layout change, merged into its first action;
     one demo-it step per command (typed into its pane), race row, AI prompt
-    (shown, and copied to the clipboard) and ★ key point (a banner).
+    (shown in a side window), code excerpt (the real file, with the
+    excerpt's lines highlighted) and ★ key point (a banner).
+
+A code excerpt is a fence with a path after the language (```ts
+demo/api/src/db.ts). Its lines must appear in that file verbatim and in
+order; a `...` line (or `// ...`, `# ...`, `-- ...`) skips ahead. Generation
+fails if an excerpt no longer matches its file.
 
 Spoken text and expected output don't become steps: you say those.
 """
@@ -24,6 +30,42 @@ REPO = os.path.dirname(HERE)
 OUT = os.path.join(HERE, "dat401-talk.el")
 
 JOB_ID_LITERAL = re.compile(r"(wait_for_job\(')[a-z0-9]{26}('\))")
+
+
+class ExcerptError(Exception):
+    pass
+
+
+ELISION = {"...", "…", "// ...", "# ...", "-- ...", "/* ... */"}
+
+
+def excerpt_ranges(excerpt, source):
+    """1-based (first, last) line ranges of SOURCE that EXCERPT shows. Lines
+    between elisions must be consecutive in SOURCE; an elision searches ahead."""
+    src = [l.rstrip() for l in source.splitlines()]
+    chunks, cur = [], []
+    for line in excerpt.splitlines():
+        if line.strip() in ELISION:
+            if cur:
+                chunks.append(cur)
+            cur = []
+        else:
+            cur.append(line.rstrip())
+    if cur:
+        chunks.append(cur)
+    if not chunks:
+        raise ExcerptError("the excerpt is empty")
+    ranges, at = [], 0
+    for chunk in chunks:
+        n = len(chunk)
+        for i in range(at, len(src) - n + 1):
+            if src[i:i + n] == chunk:
+                ranges.append((i + 1, i + n))
+                at = i + n
+                break
+        else:
+            raise ExcerptError("not found (in order) in the file: %r" % chunk[0])
+    return ranges
 
 
 def spans_text(spans):
@@ -125,8 +167,17 @@ def step_forms(step):
                           "(dat401-run %s %s)" % (el_panes(panes), el(text))))
         elif kind == "PROMPT":
             produced = b.get("expect") or ""
-            forms.append(([], "prompt", "(dat401-prompt %s %s t)" % (
-                el(b.get("command") or ""), el(produced) if produced else "nil")))
+            forms.append(([], "prompt", "(dat401-prompt %s%s)" % (
+                el(b.get("command") or ""), " " + el(produced) if produced else "")))
+        elif kind == "SHOW":
+            path = b["target"]
+            try:
+                with open(os.path.join(REPO, path)) as f:
+                    ranges = excerpt_ranges(b["elems"][0]["text"], f.read())
+            except (OSError, ExcerptError) as e:
+                raise SystemExit("TALK.md line %s: excerpt of %s: %s" % (b["line"], path, e))
+            forms.append(([], "code %s" % path, "(dat401-code %s '(%s))" % (
+                el(path), " ".join("(%d . %d)" % r for r in ranges))))
         elif kind == "KEY":
             e = b["elems"][0]
             title = "★ " + spans_text(e.get("title") or [])

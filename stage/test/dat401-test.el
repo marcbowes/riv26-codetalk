@@ -66,3 +66,31 @@
   (should (assoc "Step 7 · A race, and foreign keys" dat401--steps-index))
   ;; Every step is a form demo-it can eval.
   (should (cl-every #'consp demo-it--steps)))
+
+(ert-deftest dat401-code-shows-the-excerpt ()
+  (let* ((dir (make-temp-file "dat401" t))
+         (dat401-repo dir))
+    (with-temp-file (expand-file-name "f.ts" dir)
+      (insert "// header\nimport x;\nimport y;\n\nfunction f() {\n  body;\n  return 1;\n}\n// tail\n"))
+    (dat401-code "f.ts" '((2 . 3) (7 . 8)))
+    (with-current-buffer "*code*"
+      ;; Narrowed to the span: lines 2-8.
+      (should (equal (buffer-string)
+                     "import x;\nimport y;\n\nfunction f() {\n  body;\n  return 1;\n}\n"))
+      (should buffer-read-only)
+      (should (equal dat401--title "f.ts"))
+      (cl-flet ((faces-at (s) (save-excursion
+                                (goto-char (point-min)) (search-forward s)
+                                (mapcar (lambda (o) (overlay-get o 'face)) (overlays-at (1- (point)))))))
+        (should (memq 'dat401-code-mark (faces-at "import y")))
+        (should (memq 'dat401-code-mark (faces-at "return 1")))
+        (should (memq 'dat401-code-dim (faces-at "body")))
+        (should-not (memq 'dat401-code-dim (faces-at "import x")))))
+    (should (eq (window-buffer) (get-buffer "*code*")))
+    (should (equal dat401--layout '(code)))
+    ;; Showing another excerpt replaces the first.
+    (dat401-code "f.ts" '((5 . 5)))
+    (with-current-buffer "*code*"
+      (should (equal (buffer-string) "function f() {\n"))
+      (should (= 1 (length (overlays-in (point-min) (point-max))))))
+    (delete-directory dir t)))

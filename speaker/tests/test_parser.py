@@ -4,7 +4,7 @@ import unittest
 
 import helpers
 from prompter import inline, parser
-from prompter.model import EXPECT, KEY, PROMPT, RACE, RUN, SAY, TABLE
+from prompter.model import EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE
 
 
 def kinds(step):
@@ -296,3 +296,39 @@ class Commands(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodeExcerpt(unittest.TestCase):
+    TEXT = """# T
+
+## Build · 0:00–1:00
+
+### Step 1 · Code · 0:00–1:00
+
+The API:
+
+```ts demo/api/src/db.ts
+import { drizzle } from "@aws/aurora-dsql-drizzle";
+```
+
+```sql pane B
+SELECT 1;
+```
+"""
+
+    def test_a_path_after_the_language_makes_a_code_beat(self):
+        st = parser.parse_text(self.TEXT, "t.md").steps[-1]
+        self.assertEqual(kinds(st), [SAY, SHOW, RUN])
+        show, run = st.beats[1], st.beats[2]
+        self.assertEqual(show.target, "demo/api/src/db.ts")
+        self.assertEqual(show.elems[0].lang, "ts")
+        self.assertIn("aurora-dsql-drizzle", show.elems[0].text)
+        self.assertFalse(show.copyable)
+        self.assertEqual(show.summary(), "demo/api/src/db.ts")
+        # a pane target is not a path
+        self.assertEqual(run.target, "psql · pane B")
+
+    def test_show_path(self):
+        self.assertEqual(parser.show_path("ts demo/api/src/db.ts"), "demo/api/src/db.ts")
+        self.assertEqual(parser.show_path("sql pane B"), "")
+        self.assertEqual(parser.show_path("sh"), "")

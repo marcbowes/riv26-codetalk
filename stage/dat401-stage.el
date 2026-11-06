@@ -10,6 +10,8 @@
 ;;     punctuation, the odd hesitation, and a beat before Enter;
 ;;   - banners for the talk's "★ DSQL difference" key points, a side window for
 ;;     AI prompts, and a header line naming the current step;
+;;   - code on screen: the real file, narrowed to an excerpt from TALK.md, with
+;;     the excerpt's lines highlighted and the lines between them dimmed;
 ;;   - placeholders filled in as they're typed: <job_id> from the pane's own
 ;;     output, anything else (<cluster-A-id>, ...) asked for once.
 ;;
@@ -76,9 +78,12 @@ AWS settings always; psql settings once cluster A is known."
    process-environment))
 
 (defvar-local dat401--this-pane nil "Which pane this buffer is.")
+(defvar-local dat401--title nil "Header title, if not the pane's (e.g. a file name).")
 
 (defun dat401--header ()
-  (propertize (format " %s   %s " (alist-get dat401--this-pane dat401--pane-titles) dat401--section)
+  (propertize (format " %s   %s "
+                      (or dat401--title (alist-get dat401--this-pane dat401--pane-titles))
+                      dat401--section)
               'face '(:weight bold :inherit header-line)))
 
 (defun dat401--pane (pane)
@@ -159,9 +164,8 @@ AWS settings always; psql settings once cluster A is known."
     (set-window-buffer win buf)
     (set-window-dedicated-p win t)))
 
-(defun dat401-prompt (text &optional produced copy)
-  "Show an AI prompt (and what it PRODUCED) in a side window; with COPY, put
-the prompt on the clipboard to paste into the agent."
+(defun dat401-prompt (text &optional produced)
+  "Show an AI prompt (and what it PRODUCED) in a side window."
   (dat401--clear-overlays)
   (let* ((text (dat401--resolve-static text))
          (buf (dat401--fill-buffer "*prompt*"
@@ -170,10 +174,71 @@ the prompt on the clipboard to paste into the agent."
                                    '(:inherit default)))
          (win (split-window (frame-root-window) (- (floor (frame-width) 2)) 'right)))
     (set-window-buffer win buf)
-    (set-window-dedicated-p win t)
-    (when copy
-      (kill-new text)
-      (message "Prompt copied: paste it into the agent"))))
+    (set-window-dedicated-p win t)))
+
+;;;; Code on screen
+
+(defface dat401-code-mark
+  '((((background dark)) :extend t :background "#2e3b52")
+    (t :extend t :background "#fff1c2"))
+  "The excerpt's lines.")
+
+(defface dat401-code-dim '((t :inherit shadow))
+  "Lines of the file between the excerpt's.")
+
+(defun dat401--code-mode (path)
+  "Set the major mode for PATH without its hooks: no LSP, no linters on stage."
+  (let* ((m (assoc-default path auto-mode-alist #'string-match))
+         (m (if (consp m) (car m) m))
+         (modes (delq nil (list (and (functionp m) m)
+                                (and (string-match-p "\\.[jt]sx?\\'" path) #'js-mode)
+                                #'prog-mode))))
+    (cl-loop for mode in modes
+             until (ignore-errors (delay-mode-hooks (funcall mode)) t))
+    (font-lock-mode 1)
+    (font-lock-ensure)))
+
+(defun dat401--line-pos (n)
+  "Position of the start of line N (1-based) in the current (widened) buffer."
+  (save-excursion (goto-char (point-min)) (forward-line (1- n)) (point)))
+
+(defun dat401-code (file ranges)
+  "Show FILE (relative to the repo) full screen, narrowed to RANGES' span.
+RANGES are (FIRST . LAST) line numbers: the excerpt TALK.md shows. Those
+lines are highlighted; the lines between them are dimmed."
+  (dat401--clear-overlays)
+  (let ((path (expand-file-name file dat401-repo))
+        (buf (get-buffer-create "*code*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (widen)
+        (remove-overlays)
+        (erase-buffer)
+        (insert-file-contents path)
+        (dat401--code-mode path)
+        (cl-loop for (a . b) in ranges
+                 for prev = nil then last
+                 for last = b
+                 do (let ((ov (make-overlay (dat401--line-pos a) (dat401--line-pos (1+ b)))))
+                      (overlay-put ov 'face 'dat401-code-mark))
+                 when (and prev (> a (1+ prev)))
+                 do (overlay-put (make-overlay (dat401--line-pos (1+ prev)) (dat401--line-pos a))
+                                 'face 'dat401-code-dim))
+        (narrow-to-region (dat401--line-pos (caar ranges))
+                          (dat401--line-pos (1+ (cdar (last ranges))))))
+      (setq dat401--this-pane 'code
+            dat401--title file)
+      (setq-local display-line-numbers-widen t
+                  header-line-format '(:eval (dat401--header))
+                  cursor-type nil)
+      (display-line-numbers-mode 1)
+      (text-scale-set dat401-text-scale)
+      (read-only-mode 1)
+      (goto-char (point-min)))
+    (delete-other-windows)
+    (switch-to-buffer buf)
+    (set-window-start nil (point-min))
+    (setq dat401--layout '(code))))
 
 ;;;; Placeholders
 

@@ -9,13 +9,16 @@
   (dat401--wait-for (lambda () (string-match-p regexp (dat401--pane-text pane))) timeout))
 
 (defun dat401-e2e ()
-  (let* ((range (split-string (or (getenv "DAT401_E2E_STEPS") "1-27") "-"))
-         (from (string-to-number (car range)))
-         (to (string-to-number (cadr range)))
+  (load (expand-file-name "stage/dat401-talk.el" dat401-repo) nil t)
+  (let* ((spec (getenv "DAT401_E2E_STEPS"))
+         (range (and spec (> (length spec) 0) (split-string spec "-")))
+         (from (if range (string-to-number (car range)) 1))
+         ;; By default: the intro through step 6, wherever step 7 starts.
+         (to (if range (string-to-number (cadr range))
+               (1- (cdr (assoc "Step 7 · A race, and foreign keys" dat401--steps-index)))))
          (out (getenv "DAT401_E2E_OUT")))
     (setq dat401-typing-speed 0.05)
     (puthash "cluster-A-id" (getenv "DAT401_E2E_CLUSTER") dat401--vars)
-    (load (expand-file-name "stage/dat401-talk.el" dat401-repo) nil t)
     (dat401-stage-mode 1)
     (dat401-layout 'a)
     (cl-loop for n from from to to do
@@ -34,6 +37,9 @@
       (when (get-buffer (dat401--buffer-name p))
         (with-temp-file (expand-file-name (format "pane-%s.txt" p) out)
           (insert (dat401--pane-text p)))))
+    (when (get-buffer "*code*")
+      (with-temp-file (expand-file-name "code.txt" out)
+        (insert (with-current-buffer "*code*" (buffer-string)))))
     (with-temp-file (expand-file-name "done.txt" out) (insert "ok\n"))
     (kill-emacs 0)))
 

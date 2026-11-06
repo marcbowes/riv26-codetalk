@@ -12,7 +12,7 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import inline
-from .model import EXPECT, KEY, PROMPT, RACE, RUN, SAY, TABLE, Beat, Elem, Step
+from .model import EXPECT, KEY, PROMPT, RACE, RUN, SAY, SHOW, TABLE, Beat, Elem, Step
 from .parser import PLACEHOLDER_RE, command_pieces
 
 Style = Tuple[str, str, str]
@@ -341,6 +341,7 @@ def render_table(e: Elem, width: int, row_states: List[str], head_state: str,
 LABELS = {
     RUN: (" ▶ RUN ", "run"),
     PROMPT: (" ✦ PROMPT ", "prompt"),
+    SHOW: (" ◆ CODE ", "show"),
 }
 
 
@@ -353,7 +354,7 @@ def _code_block(beat: Beat, state: str, width: int, piece: Optional[int]) -> Lis
     lines: List[Line] = []
     head: List[Seg] = [(label, S(fam + ".label", state)),
                        (" %s " % (beat.target or fam), S(fam + ".target", state))]
-    if state == "cur":
+    if state == "cur" and beat.copyable:
         hint = "c copy" + ("  C next piece" if beat.kind == RUN and len(command_pieces(beat)) > 1 else "")
         room = width - seg_width(head) - 1
         if room > inline.width(hint) + 2:
@@ -510,7 +511,7 @@ def layout_step(step: Step, cur: int, width: int, show_reader: bool = False,
             lines.append(Line([]))
         if beat.kind == SAY:
             blines = _say_block(beat, state, cw)
-        elif beat.kind in (RUN, PROMPT):
+        elif beat.kind in (RUN, PROMPT, SHOW):
             blines = _code_block(beat, state, cw, piece if i == cur else None)
         elif beat.kind == EXPECT:
             text = beat.elems[0].text if beat.elems else ""
@@ -558,6 +559,8 @@ def beat_headline(beat: Beat, width: int = 200) -> List[Seg]:
                       if ln.strip() and not ln.strip().startswith(("--", "#"))), beat.command.strip())
         return [(LABELS[kind][0].strip() + " ", S(fam + ".target", "fut")),
                 (beat.target + ": ", S("next", "")), (first, S("next.code", ""))]
+    if kind == SHOW:
+        return [("CODE ", S("show.target", "fut")), (beat.target, S("next", ""))]
     if kind == RACE:
         return [("RACE ", S("run.target", "fut")),
                 (beat.target.replace("psql · ", "") + ": ", S("next", "")),

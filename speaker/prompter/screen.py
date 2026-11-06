@@ -394,7 +394,8 @@ HELP = [
 LEGEND = [
     ("say", "SAY", "plain text: what you say (current beat bold, with ▌)"),
     ("run.label", " ▶ RUN ", "a command, with its target (psql, shell)"),
-    ("prompt.label", " ✦ PROMPT ", "paste into the AI agent"),
+    ("prompt.label", " ✦ PROMPT ", "an AI prompt (c copies it)"),
+    ("show.label", " ◆ CODE ", "code put on screen, with its file"),
     ("expect.label", "EXPECT", "what the audience will see"),
     ("key.label", " ★ KEY POINT ", "must be said"),
     ("note.label", " ✎ PRESENTER NOTES ", "private notes for you"),

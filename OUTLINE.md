@@ -2,14 +2,15 @@
 
 Same title and abstract as 2025 ("Amazon Aurora DSQL: A developer's perspective"),
 different talk. 2025 hand-built a transfer API from raw `pg`. 2026 builds a blog
-live, using the web console where the visuals matter, psql where the exact
-results matter, and AI prompting where the point is writing code with very
-little DSQL-specific prompting. It ends with a polished version of the same app
+live, using the web console where the visuals matter and psql where the exact
+results matter. Terminal commands are typed by demo-it in Emacs (`stage/`),
+generated from TALK.md. No AI runs on stage: step 4 shows the prompt that built
+the API, then the real code. It ends with a polished version of the same app
 running serverless, multi-Region and at scale.
 
-## Ground rules for AI and other slow steps
+## Ground rules for slow steps
 
-Anything that takes a while to finish (an agent task, an index build) must:
+Anything that takes a while to finish (an index build, a data load) must:
 
 1. have a high success rate (rehearsed many times, with a fallback snapshot),
 2. not take too long, and
@@ -35,15 +36,15 @@ PostgreSQL. Then the agenda.
 
 | # | Step | Tool | Notes |
 |---|---|---|---|
-| 1 | Create cluster A in the console. Ask the AI to create cluster B. Connect to A with psql and type a small schema by hand (`sql/00-by-hand.sql`): posts with a UUID key, then an aside on sequences (an identity column without a cache errors; `CACHE 1` is dense but a round trip per id, `CACHE 65536` fast but gappy). Comments: `PRIMARY KEY (post_id, comment_id)`, random vs grouped keys (spread writes vs read locality; a per-post hotspot is fine). | console, AI, psql | Cluster creation takes seconds. Cluster B exists for step 10. Clusters show up as random IDs, so mixing them up later is believable. |
+| 1 | Create clusters A and B in the console (B before switching to Emacs). Connect to A with psql and type a small schema by hand (`sql/00-by-hand.sql`): posts with a UUID key, then an aside on sequences (an identity column without a cache errors; `CACHE 1` is dense but a round trip per id, `CACHE 65536` fast but gappy). Comments: `PRIMARY KEY (post_id, comment_id)`, random vs grouped keys (spread writes vs read locality; a per-post hotspot is fine). | console, psql | Cluster creation takes seconds. Cluster B exists for step 9. Clusters show up as random IDs, so mixing them up later is believable. |
 | 2 | Insert posts and a comment, by hand. | psql | Merge with 3 if short on time. |
 | 3 | Recent posts; comments for a post. Then drop the toy schema and `\i sql/01-schema.sql` (users, slugs, bodies, JSONB metadata) plus `02-first-rows.sql`. | psql | Very little pasting in this talk: type the small things, `\i` the real schema. |
-| 4 | Show the prompt that built the API in rehearsal (Kiro + DSQL power) and what it produced: `@aws/aurora-dsql-drizzle`, IAM auth via the connector, `transactionWithRetry` on writes. Not run live. | slide/psql | The first dry run's live build took ~11 min and wasn't worth the stage time. |
-| 5 | Load sample data with `sql/05-load-sample-data.sh` (1k users, 100k posts, 1M comments in ~15 s, generated server-side). `EXPLAIN ANALYZE VERBOSE`: home page = full scan + sort (~208 ms, ~121 DPU); comments for a post = PK range scan already (0.5 ms, 0.02 DPU; keyed by comment id alone it was 1 s / 191 DPU). | shell, psql | Pre-built, not live AI: in the first dry run the AI version took 8 minutes. |
+| 4 | Show the prompt that built the API in rehearsal (Kiro + DSQL power), then the real code with lines highlighted: `demo/api/src/db.ts` (`@aws/aurora-dsql-drizzle` on the connector, IAM auth, recycle before 60 min) and `addComment` in `queries.ts` (`transactionWithRetry`). Not run live. | demo-it | The first dry run's live build took ~11 min and wasn't worth the stage time. |
+| 5 | Load sample data with `sql/05-load-sample-data.sh` (1k users, 100k posts, 1M comments in ~15 s, generated server-side). `EXPLAIN ANALYZE VERBOSE`: home page = full scan + sort (~208 ms, ~121 DPU); comments for a post = PK range scan already (0.5 ms, 0.02 DPU; keyed by comment id alone it was 1 s / 191 DPU). | shell, psql | Pre-built: in the first dry run, building it with AI took 8 minutes. |
 | 6 | Add the home-page index. `posts (created_at)` gets *ignored* by the planner (each hit needs a lookup into the table, which is its PK B-tree); `INCLUDE (title)` makes it covering: 208 ms → 0.7 ms. No comments index needed. | psql | `CREATE INDEX ASYNC` → job in `sys.jobs` → `wait_for_job` → EXPLAIN again. |
 | 7 | FK race: two psql sessions side by side. A deletes a post while B comments on it, and both commit, leaving an orphan. Add the FK `NOT VALID`; validation fails on the orphan. Clean up, validate (a job), and re-run the race. | psql ×2 | Good teaching moment: why both commit without the FK (no write-write conflict) and what the FK changes under OCC. |
 | 8 | Query posts by category from `metadata`, then add the expression index on `metadata->>'category'`. Show `->` vs `->>` missing the index. | psql | See the backfill note under Risks. |
-| 9 | Scale to zero: in the console there are two clusters; cluster B (the agent's) has never been used and costs nothing (CloudWatch: zero DPU). Delete it: turn off deletion protection first (API default), then delete. | console | Delete B, not A. Point-in-time restore was cut (2026-11-05). |
+| 9 | Scale to zero: in the console there are two clusters; cluster B has never been used and costs nothing (CloudWatch: zero DPU). Delete it: turn off deletion protection first (leave it on when creating B), then delete. | console | Delete B, not A. Point-in-time restore was cut (2026-11-05). |
 | 10 | Set up a CDC stream in the console. A pre-built CLI tool tails the events. Add a comment from psql and watch them arrive. | console, CLI | Kinesis stream and CDC role set up by hand (not part of `demo/`). CDC goes on cluster A. |
 | 11 | Multi-Region, explained verbally while walking through setup in the console. | console | Just show the flow; the real one is already built. |
 
@@ -70,10 +71,6 @@ no intervention. Live TPS.
   - Simplest fix: put `metadata` in the step-1 schema and have step 5's
     generator fill it in. Step 8 then says "we've been storing front matter
     all along" and goes straight to querying.
-- **AI knowing the adapter.** `@aws/aurora-dsql-drizzle` is from Aug 2026 and
-  probably newer than the model's training data. Install the DSQL agent skill
-  beforehand; that's a legitimate part of the story. Then rehearse each prompt
-  until it reliably works. Keep a snapshot of good output for each AI step.
 - **FK race specifics (step 7).** Settled by the FK docs: with the FK in place,
   the deleter commits and the commenter fails at `COMMIT` with `OC000`
   (`40001`). Scripted in `sql/07-fk-race.md`.
@@ -88,8 +85,7 @@ no intervention. Live TPS.
   generator) with an idempotent `deploy.sh`
 - `events/`: Rust CLI that tails the CDC Kinesis stream and shows lag (step 10)
 - `schema.sql` for step 1, and a reset script
-- `prompts/`: the step-1 prompt (run live) and the step-4 API prompt (shown), plus a
-  fallback snapshot for each
+- `stage/`: the demo-it script, generated from TALK.md
 - Step 10's Kinesis stream + CDC service role: set up by hand, not in `demo/`
   (Kinesis must be `ON_DEMAND` with `MaxRecordSizeInKiB` 10240)
 
@@ -103,7 +99,7 @@ no intervention. Live TPS.
   The UI is static React on S3 + CloudFront, and the same distribution routes
   `/api/<region>/*` to each Region's function URL (IAM auth + origin access
   control: the talk account strips public function URL policies).
-- AI on stage: Kiro or Claude Code. Either works.
+- No AI on stage (2026-11-06). The demo-it script types every command.
 
 ## Gotchas
 

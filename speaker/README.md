@@ -123,6 +123,7 @@ labels are shown with bold, reverse video and dim, so nothing depends on color a
 | `<!-- beat -->` on its own line | forces a beat break (invisible on GitHub) |
 | ` ```sql ` / ` ```sh ` | **RUN**, one beat each. Target is `psql` or `shell` |
 | ` ```prompt ` | **PROMPT**, one beat; the target is the AI agent. `c` unwraps hard-wrapped lines so the paste doesn't send early |
+| ` ```ts demo/api/src/db.ts ` (any language, then a path) | **CODE**: an excerpt of that file, put on screen, not run. [`stage/`](../stage) opens the real file with these lines highlighted |
 | a plain ` ``` ` right after a command block | that command's **EXPECT** output, on the same beat |
 | a plain ` ``` ` anywhere else | a standalone **EXPECT · on screen** beat |
 | `> **★ DSQL difference: …**` | **KEY POINT**, one beat; the bold sentence is its title |
