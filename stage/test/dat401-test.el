@@ -466,3 +466,29 @@
       (should (dat401--wait-settled 'a 5)))
     (should (string-suffix-p "(1 row)\n\npostgres=> " screen))
     (should (> (- (float-time) t0) 0.8))))
+
+(ert-deftest dat401-highlights-stay-only-for-a-highlighted-paste ()
+  (let ((dat401--marks nil)
+        (dat401--vars (make-hash-table :test 'equal))
+        (dat401--stale-endpoints nil)
+        (buf (get-buffer-create "*psql A*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buf
+            (insert "{\n    \"identifier\": \"e5ugy6wru5xgmpi4lx4e6sxs54\",\n"
+                    "    \"endpoint\": \"e5ugy6wru5xgmpi4lx4e6sxs54.dsql.us-west-2.on.aws\"\n}\n"
+                    "           job_id           \n----------------------------\n"
+                    " acfo4u5vnngqxaahnyichcok54\n(1 row)\n\n"
+                    " Execution Time: 231.078 ms\n   Total: 120.77194 DPU\n❯ ")
+            (setq dat401--this-pane 'a))
+          ;; Step 1: the endpoint is highlighted, and PGHOST pastes it: keep.
+          (dat401-highlight 'a "identifier" "endpoint")
+          (should (dat401--keeps-highlights-p "export PGHOST=<cluster-endpoint> PGUSER=admin" 'a))
+          ;; Step 8: time and DPU highlighted; wait_for_job pastes a job id
+          ;; that isn't highlighted: clear.
+          (dat401-unhighlight)
+          (dat401-highlight 'a "time" "dpu")
+          (should-not (dat401--keeps-highlights-p "call sys.wait_for_job('<job_id>');" 'a))
+          ;; Nothing pasted at all: clear.
+          (should-not (dat401--keeps-highlights-p "select 1;" 'a)))
+      (kill-buffer buf))))

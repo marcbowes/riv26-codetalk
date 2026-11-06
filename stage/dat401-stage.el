@@ -572,6 +572,40 @@ sort, filter, cond, time, dpu), or the values of JSON fields (identifier)."
     (dat401--mark pane (or (cdr (assoc what dat401--named-marks))
                            (format "\"%s\": \"\\([^\"\n]+\\)\"" (regexp-quote what))))))
 
+(defun dat401--highlighted ()
+  "The strings highlighted on screen right now."
+  (let (out)
+    (dolist (m dat401--marks out)
+      (when-let* ((buf (get-buffer (dat401--buffer-name (car m)))))
+        (with-current-buffer buf
+          (dolist (o dat401--mark-overlays)
+            (when (overlay-buffer o)
+              (push (replace-regexp-in-string
+                     "\n" "" (buffer-substring-no-properties (overlay-start o) (overlay-end o)))
+                    out))))))))
+
+(defun dat401--peek-value (name pane)
+  "<NAME>'s value if it can be known now, without waiting or asking."
+  (pcase name
+    ("cluster-endpoint" (or (gethash name dat401--vars) (dat401--new-endpoint)))
+    ("cluster-id" (when-let* ((e (dat401--peek-value "cluster-endpoint" pane)))
+                    (car (split-string e "\\."))))
+    ("job_id" (dat401--last-job-id (dat401--pane-text pane)))
+    ((guard (assoc name dat401--scraped))
+     (dat401--last-match (cdr (assoc name dat401--scraped)) (dat401--pane-text pane)))
+    (_ (gethash name dat401--vars))))
+
+(defun dat401--keeps-highlights-p (text pane)
+  "Does TEXT paste something that's highlighted right now? Then the
+highlights stay, and the pasted value is highlighted too (step 1's endpoint,
+step 10's stream ARN). Any other command clears them first."
+  (when dat401--marks
+    (let ((lit (dat401--highlighted)))
+      (cl-some (lambda (name)
+                 (let ((v (dat401--peek-value name pane)))
+                   (and v (member v lit))))
+               (dat401--placeholders text)))))
+
 (defun dat401-unhighlight ()
   "Clear every highlight."
   (let ((panes (delete-dups (mapcar #'car dat401--marks))))
@@ -859,10 +893,10 @@ wait after the last line: it may start something that keeps running."
 
 (defun dat401-run (panes text)
   "Type TEXT into each of PANES (a pane symbol or a list), one after the other.
-Highlights clear first, unless TEXT pastes a value (step 1's PGHOST export
-pastes the highlighted identifier, and it's highlighted too)."
+Highlights clear first, unless TEXT pastes a value that's highlighted (step
+1's PGHOST export pastes the highlighted endpoint, highlighted there too)."
   (let ((panes (if (listp panes) panes (list panes))))
-    (unless (dat401--placeholders text)
+    (unless (dat401--keeps-highlights-p text (car panes))
       (dat401-unhighlight))
     (dat401--start panes)
     (dolist (p panes)
@@ -902,7 +936,7 @@ fails, it's abandoned (Ctrl-G) and TEXT is typed instead."
 TO on screen, then, for each line, copy it from FROM's screen (copy mode: up
 to it, select it, copy), paste it into TO, and Enter. A line that isn't on
 FROM's screen is typed."
-  (unless (dat401--placeholders text)
+  (unless (dat401--keeps-highlights-p text from)
     (dat401-unhighlight))
   (setq dat401--hurry nil)
   (dat401--show to)
@@ -923,6 +957,8 @@ FROM's screen is typed."
   "Paste TEXT (placeholders filled in) into PANE in one go, then Enter, the
 way you'd paste a block of exports. At a shell prompt it's a bracketed
 paste, so the shell shows it as pasted and runs it on Enter."
+  (unless (dat401--keeps-highlights-p text pane)
+    (dat401-unhighlight))
   (dat401--start (list pane))
   (select-window (get-buffer-window (dat401--pane pane)))
   (let ((text (string-trim-right (dat401--resolve text pane))))
