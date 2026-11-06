@@ -396,3 +396,15 @@
           (while t (read (current-buffer)) (cl-incf n))
         (end-of-file nil))
       (should (> n 4)))))
+
+(ert-deftest dat401-kill-terminal-never-asks ()
+  ;; A live process and a buffer-local kill check (as Ghostel adds) must not
+  ;; turn into a question: in the demo it aborts everything.
+  (let ((buf (generate-new-buffer "*claude*")))
+    (with-current-buffer buf
+      (add-hook 'kill-buffer-query-functions (lambda () (error "Asked to confirm")) nil t))
+    (make-process :name "dat401-test-sleep" :buffer buf :command '("sleep" "30"))
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) (error "Asked yes-or-no")))
+              ((symbol-function 'y-or-n-p) (lambda (&rest _) (error "Asked y-or-n"))))
+      (dat401--kill-terminal buf))
+    (should-not (buffer-live-p buf))))

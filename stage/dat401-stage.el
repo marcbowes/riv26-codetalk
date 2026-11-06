@@ -156,12 +156,20 @@ area: the audience shouldn't see \"Copy mode\" go by."
   (if (dat401--ghostel-p) 'ghostel-wrap 'vterm-line-wrap))
 
 (defun dat401--kill-terminal (buf)
-  "Kill terminal buffer BUF and its shell, without asking."
+  "Kill terminal buffer BUF and its processes, never asking (a question in the
+minibuffer stops the demo). Ghostel adds a buffer-local kill check, so the
+checks are cleared in BUF itself, and every process it owns is told not to
+ask. If killing still fails, BUF is just buried: it's off screen anyway."
   (when (buffer-live-p buf)
-    (when-let* ((proc (get-buffer-process buf)))
-      (set-process-query-on-exit-flag proc nil))
-    (let ((kill-buffer-query-functions nil))
-      (kill-buffer buf))))
+    (dolist (proc (process-list))
+      (when (eq (process-buffer proc) buf)
+        (set-process-query-on-exit-flag proc nil)))
+    (with-current-buffer buf
+      (setq-local kill-buffer-query-functions nil))
+    (condition-case nil
+        (let ((kill-buffer-query-functions nil))
+          (kill-buffer buf))
+      (error (bury-buffer buf)))))
 
 ;;;; Panes
 
@@ -358,12 +366,12 @@ ever sent (paragraphs are typed as one), and `dat401-quit-agent' closes it."
   (setq dat401--hurry nil))
 
 (defun dat401-quit-agent ()
-  "Close the agent's frame without submitting anything: the window goes, and
-the agent with it."
+  "Close the agent's frame without submitting anything: the window goes
+first, then the agent, quietly."
+  (when (memq 'claude dat401--layout)
+    (apply #'dat401-layout (or (remq 'claude dat401--layout) '(a))))
   (when-let* ((buf (get-buffer (dat401--buffer-name 'claude))))
-    (when (memq 'claude dat401--layout)
-      (apply #'dat401-layout (or (remq 'claude dat401--layout) '(a))))
-    (dat401--kill-terminal buf)))
+    (ignore-errors (dat401--kill-terminal buf))))
 
 ;;;; Placeholders
 
