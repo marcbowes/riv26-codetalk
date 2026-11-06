@@ -408,3 +408,22 @@
               ((symbol-function 'y-or-n-p) (lambda (&rest _) (error "Asked y-or-n"))))
       (dat401--kill-terminal buf))
     (should-not (buffer-live-p buf))))
+
+(ert-deftest dat401-wait-does-not-spin-on-a-pending-key ()
+  ;; An F12 pressed while a step waits for psql: the wait must keep going
+  ;; (and finish when the condition holds), swallow the key, and not leave
+  ;; it to run the next step.
+  (let ((done nil) (dat401--hurry nil))
+    (run-at-time 0.3 nil (lambda () (setq done t)))
+    (setq unread-command-events (list 'f12))
+    (let ((t0 (float-time)))
+      (should (dat401--wait-for (lambda () done) 5))
+      (should (< (- (float-time) t0) 2)))
+    (should (null unread-command-events))
+    (should dat401--hurry)))
+
+(ert-deftest dat401-sleep-swallows-keys-even-when-hurried ()
+  (let ((dat401--hurry t))
+    (setq unread-command-events (list 'f12 'f12))
+    (dat401--sleep 0.05)
+    (should (null unread-command-events))))

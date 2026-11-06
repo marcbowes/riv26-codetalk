@@ -248,12 +248,12 @@ the shell's redraw leaves stray lines. Panes with history are left alone."
       (redisplay t)
       (dolist (p fresh)
         (dat401--wait-for (lambda () (dat401--shell-prompt-p p)) 5))
-      (sit-for 0.4)
+      (dat401--pause-for 0.4)
       (dolist (p fresh)
         (with-current-buffer (dat401--pane p)
           (setq dat401--fresh nil)
           (dat401--term-clear)))
-      (sit-for 0.2))))
+      (dat401--pause-for 0.2))))
 
 (defun dat401--show (pane)
   "Make sure PANE is on screen, switching layout if needed."
@@ -621,13 +621,32 @@ now and then there's a pause to think before a word, or a hiccup mid-word."
     (nreverse out)))
 
 
+(defun dat401--swallow-input ()
+  "Eat keys pressed while a step runs. They hurry the step along (finish the
+typing), and must never be left pending: once the step ends, a pending F12
+would run the next one."
+  (when (input-pending-p)
+    (setq dat401--hurry t)
+    (while (input-pending-p)
+      (read-event nil nil 0.01))))
+
+(defun dat401--pause-for (secs)
+  "Wait SECS reading terminal output and redisplaying. Unlike `sit-for', a
+key press doesn't cut it short (it's swallowed), so nothing spins."
+  (let ((deadline (+ (float-time) secs)))
+    (while (< (float-time) deadline)
+      (dat401--swallow-input)
+      (accept-process-output nil (min 0.05 (max 0.001 (- deadline (float-time)))))
+      (redisplay))))
+
 (defun dat401--sleep (secs)
-  "Wait SECS, redisplaying. A key press sets `dat401--hurry' (and is swallowed)."
+  "A typing delay of SECS, redisplaying. A key press sets `dat401--hurry' (and
+is swallowed), after which the rest goes in at once."
+  (dat401--swallow-input)
   (if (or dat401--hurry (<= secs 0))
       (redisplay)
     (unless (sit-for secs)
-      (setq dat401--hurry t)
-      (read-event nil nil 0.01))))
+      (dat401--swallow-input))))
 
 (defun dat401--pane-text (pane)
   "PANE's text, with lines the terminal wrapped joined back up."
@@ -635,10 +654,15 @@ now and then there's a pause to think before a word, or a hiccup mid-word."
     (substring-no-properties (filter-buffer-substring (point-min) (point-max)))))
 
 (defun dat401--wait-for (pred timeout)
-  "Poll PRED until it returns non-nil or TIMEOUT seconds pass."
+  "Poll PRED until it returns non-nil or TIMEOUT seconds pass, reading the
+terminals' output as it goes. A key pressed meanwhile is swallowed. (With
+`sit-for' a pending key made this spin without reading any output, so it
+never saw psql come back: Emacs looked hung until the timeout.)"
   (let ((deadline (+ (float-time) timeout)) v)
     (while (and (not (setq v (funcall pred))) (< (float-time) deadline))
-      (sit-for 0.1))
+      (dat401--swallow-input)
+      (accept-process-output nil 0.05)
+      (redisplay))
     v))
 
 (defun dat401--at-prompt-p (pane)
@@ -789,7 +813,7 @@ copied from the screen if it's there, pasted if it's an id, otherwise typed."
   (remhash "cluster-endpoint" dat401--vars))
 
 (defun dat401--wait-prompt (pane)
-  (sit-for 0.3)
+  (dat401--pause-for 0.3)
   (dat401--wait-for (lambda () (dat401--at-prompt-p pane)) dat401-wait-timeout))
 
 (defun dat401--type (pane text)
