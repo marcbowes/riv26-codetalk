@@ -146,7 +146,7 @@ That's cluster B. Remember it; it comes back later.
 
 **Connect with psql.** Notice what's missing:
 
-```sh
+```sh both panes
 export PGHOST=<cluster-A-id>.dsql.us-west-2.on.aws PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST --expires-in 3600)"
 psql
@@ -553,12 +553,24 @@ ALTER TABLE ASYNC comments VALIDATE CONSTRAINT comments_post_fk;
 CALL sys.wait_for_job('<job_id>');                                 -- succeeded = t (about 10 s on 1M rows)
 ```
 
-Now the same race again. Put the post back, reconnect pane B (`\c`), and
-re-run the two `\gset` lines in both panes:
+Now the same race again. Put the post back:
 
 ```sql pane A
 INSERT INTO posts (author_id, slug, title, body)
 SELECT id, 'hello-dsql', 'Hello, DSQL', 'again' FROM users WHERE username = 'marc';
+```
+
+Reconnect pane B, so its session picks up the new foreign key:
+
+```sql pane B
+\c
+```
+
+And look the post up again in both panes, because it has a new ID:
+
+```sql both panes
+SELECT id AS post_id FROM posts WHERE slug = 'hello-dsql' \gset
+SELECT id AS user_id FROM users WHERE username = 'raluca' \gset
 ```
 
 | | Pane A | Pane B |

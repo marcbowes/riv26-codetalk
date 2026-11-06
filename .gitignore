@@ -9,3 +9,4 @@ target/
 
 # Rehearsal scratch (AI-generated code from dry runs)
 dryrun*/
+__pycache__/

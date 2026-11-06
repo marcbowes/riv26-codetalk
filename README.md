@@ -8,6 +8,7 @@ Code and scripts for the code talk.
 | Path | What | Used in |
 |---|---|---|
 | [`speaker/`](speaker) | Terminal teleprompter that plays TALK.md beat by beat: what to say, what to run (`c` copies it), key points, ahead/behind schedule | On stage |
+| [`stage/`](stage) | Emacs demo-it script generated from TALK.md: F12 types each command into the right pane at a human pace, with banners for the key points | On stage |
 | [`sql/`](sql) | psql scripts: schema, queries, EXPLAIN, async indexes, the foreign key race, the JSONB expression index | Live build, steps 1–9 |
 | [`prompts/`](prompts) | The AI prompts, with time budgets and fallbacks | Live build, step 1 (step 4 shows the API prompt) |
 | [`events/`](events) | Rust CLI that tails DSQL CDC records from Kinesis and shows per-stage lag | Step 10 |
