@@ -17,9 +17,18 @@ banners, nothing that says "step 3". Just terminals and files.
 
   SQL is typed in lower case and without indentation, as people do. TALK.md
   keeps its formatting for readers.
-- **Pasting:** placeholders (`<cluster-id>`, `<job_id>`) go in all at once,
-  as if pasted. A ```` ```sh pane B paste ```` block is pasted whole (a
-  bracketed paste, so the shell shows it as pasted), then run.
+- **IDs are never typed.** A command that needs one (`<cluster-id>` in step
+  1, every `<job_id>`) acts out copying it from the output above:
+  1. Enter vterm's copy mode.
+  2. Move up to the ID's line: a couple of taps, then key-repeat speed.
+  3. Hop along that line a word at a time.
+  4. Set the mark and select the ID.
+  5. Copy, go back to the prompt, and paste.
+
+  The clipboard isn't touched: the value comes from a variable. An ID that
+  isn't on screen is pasted. A readable value (`<kinesis-stream>`) is typed.
+- **Pasting a block:** a ```` ```sh pane B paste ```` block is pasted whole
+  (a bracketed paste, so the shell shows it as pasted), then run.
 
 - **Panes** are vterm buffers: `psql A`, `psql B`, `shell`, `events` and
   `load`. Each one starts in the repo root with `AWS_PROFILE` and
@@ -28,10 +37,14 @@ banners, nothing that says "step 3". Just terminals and files.
 - **Layouts** follow the commands. Most steps show psql A on its own. The
   foreign key race shows A and B side by side. The loader shows A with a
   shell along the bottom.
-- **Highlights** on terminal output: `<!-- stage: highlight identifier -->`
-  highlights a JSON field's value. Highlights stay, and survive the terminal
-  redrawing, until `<!-- stage: clear -->`. A value pasted while they're on is
-  highlighted too.
+- **Highlights** on terminal output, one F12 each:
+  - `<!-- stage: highlight identifier -->` highlights a JSON field's value.
+  - `highlight dpu` highlights an EXPLAIN's DPU total.
+  - `highlight index` highlights the plan's index scan.
+
+  Highlights survive the terminal redrawing. They clear at the next command,
+  or at `<!-- stage: clear -->`. A command that pastes a value keeps them, and
+  highlights the pasted value too.
 - **Files** open full screen, named like the file (`db.ts`, `prompt.md`). Code
   is narrowed to the excerpt TALK.md shows, with its lines highlighted and the
   lines between them dimmed. Step 4 does this for `demo/api` and its prompt.
@@ -118,9 +131,13 @@ command and where it runs. A fence's info string picks the pane:
   no longer matches its file.
 - ```` ```text ```` is expected output. It's never typed.
 
-Stage directions are HTML comments, hidden on GitHub, one F12 each:
-`<!-- stage: highlight <json field> -->`, `<!-- stage: clear -->` and
-`<!-- stage: open pane B -->`.
+Stage directions are HTML comments, hidden on GitHub. Each takes one F12:
+- `<!-- stage: highlight <json field | dpu | index> -->`
+- `<!-- stage: clear -->`
+- `<!-- stage: open pane B -->`
+
+`<!-- stage: close pane shell -->` has no F12 of its own: it happens with the
+next one.
 
 Comment lines, trailing comments and indentation are dropped before typing,
 and SQL is lowercased outside quotes. A literal `wait_for_job('...')` id is
