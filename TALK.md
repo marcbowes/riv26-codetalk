@@ -490,10 +490,12 @@ That's the primary key from step 1 paying off: the comments for this post are on
 
 ### Step 6 · An index, without downtime · 17:00–20:00
 
-The comments don't need an index. The home page does. The obvious one:
+The comments don't need an index. The home page does. It orders by
+`created_at` and returns `title`, so the index has both: `created_at` as the
+key, with `title` included.
 
 ```sql
-CREATE INDEX ASYNC posts_created_at_idx ON posts (created_at);
+CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
 ```
 ```
            job_id
@@ -514,44 +516,13 @@ CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');      -- about 25 s on 100k 
 > background job you can watch in `sys.jobs`. A big table gets a new index
 > with no lock and no maintenance window.
 
-Run the home page `EXPLAIN` again (Ctrl-R in psql):
+Why `INCLUDE`? DSQL stores a table as its primary-key B-tree: the key, with
+every other column included (`\d+ posts` shows `Access method: btree_table`).
+An index on `created_at` alone would hold just `created_at` and the key, so
+returning `title` would mean a lookup into the table for every row. With
+`title` in the index, the query never touches the table.
 
-```sql recall: desc limit
-EXPLAIN ANALYZE VERBOSE
-SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
-```
-
-<!-- stage: highlight scan sort -->
-It's **exactly the same plan**: a full scan plus a sort, about 208 ms. The
-planner ignored our index.
-
-Here's why. Look at how DSQL stores a table:
-
-```sql
-\d+ posts
-```
-```
-...
-Indexes:
-    "posts_pkey" PRIMARY KEY, btree_index (id) INCLUDE (author_id, slug, title, body, metadata, created_at)
-...
-Access method: btree_table
-```
-
-The table *is* its primary-key B-tree: the key, with every other column
-included. A secondary index on `created_at` holds just `created_at` and the
-key. To return `title`, every hit would need a second lookup into the table.
-The planner did the arithmetic and decided one scan was cheaper than many
-lookups.
-
-So give the index what the query needs:
-
-```sql
-CREATE INDEX ASYNC posts_recent_idx ON posts (created_at) INCLUDE (title);
-CALL sys.wait_for_job('<job_id>');
-```
-
-Then the home page query once more (Ctrl-R again):
+The home page query once more (Ctrl-R in psql):
 
 ```sql recall: desc limit
 EXPLAIN ANALYZE VERBOSE
@@ -575,10 +546,6 @@ It's an index-only scan, read backwards for the `DESC`: 20 rows read to return
 > lookup per row. `INCLUDE` the columns you return. And there are no planner
 > knobs to reach for instead (`SET enable_sort` is "not supported"): you fix
 > plans with indexes.
-
-```sql
-DROP INDEX posts_created_at_idx;
-```
 
 ### Step 7 · A race, and foreign keys · 20:00–24:00
 

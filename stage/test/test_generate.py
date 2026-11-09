@@ -121,7 +121,7 @@ class RealTalk(unittest.TestCase):
                          + out.count("(dat401-unhighlight)") + out.count("(dat401-open ")
                          + out.count("(dat401-close ") + out.count("(dat401-recall "),
                          len(cmds))
-        self.assertGreaterEqual(out.count("(dat401-recall 'a "), 3)       # re-runs come from history
+        self.assertGreaterEqual(out.count("(dat401-recall 'a "), 2)       # re-runs come from history
         self.assertNotIn("(dat401-key ", out)                # no banners: it should look live
         self.assertEqual(out.count("(dat401-agent "), out.count("(dat401-quit-agent)"))  # always closed
         self.assertNotIn("\\n", out[out.index("(dat401-agent "):].split(")", 1)[0])  # no newline: never submitted
