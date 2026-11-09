@@ -174,7 +174,10 @@ def main():
         ("cdc: the comment shows up in the CDC viewer", "Hello from the stage" in events),
         ("no unresolved placeholders typed", not re.search(r"<(job_id|cluster-endpoint|cluster-id)>", a + b)),
     ]
-    if jump and "Step 9" in jump:
+    if jump and "API" in jump:
+        checks = [c for c in checks if c[0].startswith("api:") or c[0] in
+                  ("finished", "no unresolved placeholders typed")]
+    elif jump and "Step 9" in jump:
         checks = [c for c in checks if c[0].startswith("cdc:") or c[0] in
                   ("finished", "no unresolved placeholders typed")]
     elif jump:
