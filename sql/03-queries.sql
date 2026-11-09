@@ -1,5 +1,5 @@
--- Step 3: the queries the blog needs. These are what the API (step 4) runs, and the
--- EXPLAIN targets (step 5).
+-- Step 3: the queries the blog needs. These are what the API runs, and the
+-- EXPLAIN targets (step 4).
 
 -- Recent posts, with author
 SELECT p.id, p.title, u.display_name AS author, p.created_at

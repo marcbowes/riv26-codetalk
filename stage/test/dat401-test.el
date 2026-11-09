@@ -83,7 +83,7 @@
 (ert-deftest dat401-generated-steps-load ()
   (load (expand-file-name "stage/dat401-talk.el" dat401-repo) nil t)
   (should (> (length demo-it--steps) 40))
-  (should (assoc "Step 7 · A race, and foreign keys" dat401--steps-index))
+  (should (assoc "Step 6 · A race, and foreign keys" dat401--steps-index))
   ;; Every step is a form demo-it can eval.
   (should (cl-every #'consp demo-it--steps)))
 

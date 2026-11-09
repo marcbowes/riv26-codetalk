@@ -47,7 +47,7 @@ banners, nothing that says "step 3". Just terminals and files.
   highlights the pasted value too.
 - **Files** open full screen, named like the file (`db.ts`, `prompt.md`). Code
   is narrowed to the excerpt TALK.md shows, with its lines highlighted and the
-  lines between them dimmed. Step 4 does this for `demo/api` and its prompt.
+  lines between them dimmed. The polished app's API step does this for `demo/api`.
 - **★ DSQL difference** callouts aren't shown. You say them; speaker has them.
 
 `speaker/` still works as the teleprompter on a second screen. This replaces
@@ -86,7 +86,7 @@ which mangles full-screen programs. `dat401-start` makes the whole frame's
 font big instead (Doom's `doom-big-font-mode`), and `dat401-stop` puts it
 back.
 
-Step 10 needs the IAM role DSQL uses to write CDC records to Kinesis. Create
+Step 9 needs the IAM role DSQL uses to write CDC records to Kinesis. Create
 it once, before the talk. It's safe to re-run:
 
 ```sh
@@ -114,7 +114,7 @@ You never copy anything by hand:
   (and `<cluster-id>`) come from the endpoint it prints, copied from that
   line.
 - `<job_id>` comes from the `CREATE INDEX ASYNC` output on screen.
-- In step 10, `<kinesis-stream-arn>` comes from the `describe-stream-summary`
+- In step 9, `<kinesis-stream-arn>` comes from the `describe-stream-summary`
   output, `<cdc-role-arn>` from `get-role`, and `<cdc-stream-id>` from
   `create-stream`.
 - Anything else is asked for once in the minibuffer, then remembered.
@@ -183,9 +183,11 @@ B=~/.emacs.d/.local/straight/build-32.0.50
 emacs -Q --batch -L $B/demo-it -L $B/vterm -L stage -l stage/test/dat401-test.el -f ert-run-tests-batch-and-exit
 python3 -m unittest discover -s stage/test
 
-# End to end: real Doom Emacs in a pty. Runs the intro through step 6:
-# step 1 creates a real cluster (deleted afterwards), the highlights, pane B's
-# paste, the schema, step 4's code, the loader, EXPLAIN, both async indexes.
-# Then it checks what the panes show.
+# End to end: real Doom Emacs in a pty, against a real cluster (deleted
+# afterwards). By default, the intro through step 7: the highlights, pane B's
+# paste, both schemas, the loader, EXPLAIN, the index, the race, JSONB.
 AWS_PROFILE=bowes python3 stage/test/e2e.py
+# C-F12 from a fresh start (fast-forward), then on from that step:
+AWS_PROFILE=bowes python3 stage/test/e2e.py --jump "Step 6 · A race, and foreign keys"
+AWS_PROFILE=bowes python3 stage/test/e2e.py --jump "Step 9 · Change data capture" --until "The app, in two Regions"
 ```

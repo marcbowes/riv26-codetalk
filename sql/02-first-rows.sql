@@ -1,4 +1,5 @@
--- Step 3 (end), after 01-schema.sql: two users, a post, a comment.
+-- The first rows: two users, a post, a comment. 05-load-sample-data.sh adds
+-- them (step 4) before the bulk data; later steps use them (hello-dsql, raluca).
 
 INSERT INTO users (username, display_name)
 VALUES ('marc', 'Marc Bowes'), ('raluca', 'Raluca Constantin')

@@ -58,7 +58,7 @@ Timing, staging, and what to do if something goes wrong.
 | Time | Part |
 |---|---|
 | 0:00–5:00 | Intro: what DSQL is, the agenda |
-| 5:00–35:00 | Build it: steps 1–11 (console, psql) |
+| 5:00–35:00 | Build it: steps 1–10 (console, psql) |
 | 35:00–40:00 | The polished app, in two Regions |
 | 40:00–44:00 | Scale: 20,000 requests per second |
 | 44:00–45:00 | Wrap-up |
@@ -70,10 +70,10 @@ You need:
   parts also use us-east-1, with us-east-2 as the witness.
 - **AWS CLI v2** (with `aws dsql`), **psql** (16 or newer), **jq**, and this repo:
   `git clone https://github.com/marcbowes/riv26-codetalk && cd riv26-codetalk`
-- **Optional: Node.js**, to run the API from step 4 yourself (`demo/api`).
+- **Optional: Node.js**, to run the API yourself (`demo/api`).
 - **Optional: Rust** (`cargo`), to build the CDC viewer in `events/`.
 
-Cost: steps 1–11 cost cents. The polished app (`demo/`) runs CloudFront,
+Cost: steps 1–10 cost cents. The polished app (`demo/`) runs CloudFront,
 Lambda, two clusters and an EC2 host. Tear it down with `demo/destroy.sh`
 when you're done. [Cleaning up](#cleaning-up) covers everything.
 
@@ -175,7 +175,7 @@ nothing in a config file.
 > JDBC, Python, Go, Rust, .NET, Ruby and PHP do this for you.
 
 <!-- stage: open pane B -->
-**A second session, for later.** Step 7 needs two. The same environment, then
+**A second session, for later.** Step 6 needs two. The same environment, then
 psql:
 
 ```sh pane B paste
@@ -223,7 +223,7 @@ pull in opposite directions:
   spreads across the whole fleet. That's DynamoDB's partition-key advice, and
   it's why comment IDs are UUIDs.
 - **Keys that group things go fast.** DSQL stores a table by its primary key,
-  as we'll see in step 6. With `post_id` first, a post's comments sit next to
+  as we'll see in step 5. With `post_id` first, a post's comments sit next to
   each other, and "load the comments for this post" becomes one range read. It
   needs no secondary index.
 
@@ -244,14 +244,14 @@ scale without limit; comments across *all* posts do, and they still spread out.
 <summary>Presenter notes</summary>
 
 - demo-it types it. [`sql/00-by-hand.sql`](sql/00-by-hand.sql) is the same schema.
-- The console cluster is only for show. Nothing uses it until step 9 deletes
-  it, so leave its deletion protection on: step 9 turns it off.
+- The console cluster is only for show. Nothing uses it until step 8 deletes
+  it, so leave its deletion protection on: step 8 turns it off.
 - F12s after `create-cluster`: highlight the identifier; highlight the
   endpoint; type the `PGHOST` export (the endpoint is copied from the output
   and pasted, and highlighted too); clear; the token and `psql`. There's
   nothing to copy by hand.
 - Pane B: F12 opens it, F12 pastes the exports, F12 runs `psql`. It's ready
-  for step 7.
+  for step 6.
 - If psql says the cluster isn't ready, wait a few seconds and run `psql` again.
 - Sequences are talked about, not shown: for the numbers (CACHE 1: a 3,000-row
   insert took 20.6 s; CACHE 65536: 117 ms), see `sql/00-by-hand.sql`.
@@ -288,120 +288,63 @@ INSERT INTO comments (post_id, body) VALUES (:'post_id', 'First!');
 
 ### Step 3 · Queries · 10:30–12:00
 
-The two queries a blog needs:
+The two queries a blog needs, with psql's timing on:
 
 ```sql
-SELECT id, title, created_at FROM posts ORDER BY created_at DESC LIMIT 10;
-
+\timing on
+SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
+```
+```sql
 SELECT p.title, c.body, c.created_at
 FROM posts p JOIN comments c ON c.post_id = p.id;
 ```
 
-A join, an `ORDER BY`, a `LIMIT`: nothing to learn. That's the point.
+A join, an `ORDER BY`, a `LIMIT`: nothing to learn, and a couple of
+milliseconds each. That's the point.
 
-Now the real schema: users, slugs, post bodies, and a JSONB column for front
-matter. This is the one thing I'll load from a file, not type:
+Hold up, though. They're fast because there's nothing here: two posts and a
+comment.
+
+### Step 4 · A real schema, a million rows, and a bad plan · 12:00–17:00
+
+Before we load a real blog: the schema I typed is missing a few things a real
+app needs. I'll drop it and recreate it from a file:
 
 ```sql
 DROP TABLE comments, posts;
 \i sql/01-schema.sql
-\i sql/02-first-rows.sql
 ```
 
-[`sql/01-schema.sql`](sql/01-schema.sql) is plain PostgreSQL DDL with the same
-choices: UUIDs everywhere, and comments keyed by `(post_id, comment_id)`. It
-adds users, a `UNIQUE` username and slug, and `metadata jsonb` for each post's
-category, tags and reading time.
+Let me show you what it looks like now:
 
-### Step 4 · An API, from one prompt · 12:00–13:00
-
-With a schema in place, the application is the easy part. I'll ask Claude Code
-for it. It has the Aurora DSQL skill installed, which is the only DSQL-specific
-setup here:
-
-```prompt
-in ./blog build a typescript api for my blog on aurora dsql w/ drizzle orm. cluster endpoint is in $PGHOST, connect as admin. tables already exist so just read teh schema from the db. ops: list posts (newest first w/ author), get post (with its comments + each comenters username), create post, add comment. give me an http server and a small cli that calls it over http. then start the server and use the cli to chcek every op works
+```sql
+\d+ posts
+```
+```
+                                         Table "public.posts"
+   Column   |           Type           | Collation | Nullable |      Default      | Storage  | Compression
+------------+--------------------------+-----------+----------+-------------------+----------+-------------
+ id         | uuid                     |           | not null | gen_random_uuid() | plain    |
+ author_id  | uuid                     |           | not null |                   | plain    |
+ slug       | text                     |           | not null |                   | extended |
+ title      | text                     |           | not null |                   | extended |
+ body       | text                     |           | not null |                   | extended |
+ metadata   | jsonb                    |           | not null | '{}'::jsonb       | extended |
+ created_at | timestamp with time zone |           | not null | now()             | plain    |
 ```
 
-*(Typed the way people actually prompt, typos included. The agent doesn't mind.)*
+I've added `metadata`, which is JSON: each post's category, tags and reading
+time. And a slug and a body, and an author:
 
-I'm not going to submit that. I did it earlier, so you don't have to wait for
-it. There's nothing DSQL-specific in the prompt beyond the word "DSQL": the
-skill supplies the rest. Here's the code it led to, as it runs in the finished
-app at 35:00. First, the connection:
-
-```ts demo/api/src/db.ts
-import { drizzle } from "@aws/aurora-dsql-drizzle";
-import { AuroraDSQLPool } from "@aws/aurora-dsql-node-postgres-connector";
-...
-export function createDb({ host, user, max }: DbOptions) {
-  const pool = new AuroraDSQLPool({
-    host,
-    user,
-    max,
-    // DSQL closes connections after 60 minutes. Recycle well before that.
-    maxLifetimeSeconds: 50 * 60,
-...
-  return drizzle({ client: pool, schema });
-}
+```sql
+\d+ users
 ```
 
-That's the
-[DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
-`@aws/aurora-dsql-drizzle`, on the DSQL connector for node-postgres. The
-connector makes a fresh IAM token for each new connection, so there's no
-password anywhere: not in the code, not in an environment variable.
+I've also added a `users` table, because of course comments have users. The
+same choices as before: UUIDs everywhere, and comments keyed by
+`(post_id, comment_id)` ([`sql/01-schema.sql`](sql/01-schema.sql)).
 
-Then every write:
-
-```ts demo/api/src/queries.ts
-export async function addComment(
-...
-  return db.transactionWithRetry(
-    async (tx) => {
-      const [post] = await tx.select({ id: posts.id }).from(posts).where(eq(posts.id, postId));
-      if (!post) throw new HttpError(404, "post not found");
-...
-      const [row] = await tx
-        .insert(comments)
-        .values({ postId, userId: user.id, body: input.body })
-...
-    },
-    undefined,
-    WRITE_RETRY,
-  );
-}
-```
-
-`db.transactionWithRetry(...)` runs the whole transaction again if it loses a
-conflict. Why a database would make you do that is step 7.
-
-> Following along: [`demo/api`](demo/api) is this API, written for the same
-> schema. To run it against your cluster:
-> ```sh
-> cd demo && npm install
-> CLUSTER_ENDPOINT=$PGHOST DB_USER=admin npm run dev:api     # http://localhost:3000
-> ```
-
-<details>
-<summary>Presenter notes</summary>
-
-- F12 opens a terminal beside psql, starts Claude Code, and types the prompt.
-  The next F12 closes it. Then `db.ts`, then `queries.ts`: the real files, with
-  the lines above highlighted.
-- The prompt is never submitted: demo-it sends no Enter and no newline (the
-  paragraphs are typed as one). **Don't press Enter while Claude Code is on
-  screen**: it's in auto mode, so it would start building.
-- Kiro built the first version in rehearsal. In the first dry run Kiro took about 11
-  minutes. Its first version used plain `drizzle-orm` with the connector and
-  needed a nudge toward `@aws/aurora-dsql-drizzle`, and its CLI called the
-  database directly (hence "calls it over HTTP" in the prompt).
-</details>
-
-### Step 5 · A million rows, and a bad plan · 13:00–17:00
-
-A blog with three posts is easy to make fast, so let's load a real one. In a
-second terminal:
+Now a real blog's worth of data. In a second terminal:
 
 ```sh
 PGHOST=$PGHOST ./sql/05-load-sample-data.sh
@@ -415,15 +358,25 @@ Done in 15s
 ```
 
 That's 1.1 million rows in 15 seconds, generated inside the database with
-`generate_series`, so nothing big crosses the network. Look at the batch size
-in that first line: 3,000 rows per transaction.
+`generate_series`, so nothing big crosses the network. (It adds our first
+users, marc and raluca, a `hello-dsql` post and its first comment, too.) Look
+at the batch size in that first line: 3,000 rows per transaction.
 
 > **★ DSQL difference: transactions are bounded.** A transaction can modify
 > at most 3,000 rows and 10 MiB, and can run for at most 5 minutes. Bulk loads
 > batch, which is good practice anyway. Here, 8 batches run in parallel.
 
 <!-- stage: close pane shell -->
-**Now look at a query plan.** First the home page, the 20 newest posts:
+The home page again (Ctrl-R in psql):
+
+```sql recall: desc limit
+SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
+```
+```
+Time: 214.316 ms
+```
+
+Kind of slow. **Look at the query plan:**
 
 ```sql
 EXPLAIN ANALYZE VERBOSE
@@ -451,7 +404,7 @@ Then it sorted them, to return 20. That's an ordinary PostgreSQL plan.
 But look at the bottom: **Statement DPU Estimate**. A DPU is what DSQL bills
 you for, so this plan tells you what the query *costs*, not
 just how long it takes. This one costs about 121 DPU every time someone loads
-the home page. We'll fix it in step 6.
+the home page. We'll fix it in step 5.
 
 > **★ DSQL difference: the plan shows the price.** `EXPLAIN ANALYZE VERBOSE`
 > ends with an estimated DPU cost per statement, broken down into compute,
@@ -488,7 +441,7 @@ That's the primary key from step 1 paying off: the comments for this post are on
 - `\gset` must be on its own line; pasting two lines at once breaks it.
 </details>
 
-### Step 6 · An index, without downtime · 17:00–20:00
+### Step 5 · An index, without downtime · 17:00–20:00
 
 The comments don't need an index. The home page does. It orders by
 `created_at` and returns `title`, so the index has both: `created_at` as the
@@ -512,7 +465,7 @@ CALL sys.wait_for_job('sdtn7gjobfeglgjbysgk3pog4i');      -- about 25 s on 100k 
 ```
 
 > **★ DSQL difference: schema changes are jobs.** `CREATE INDEX ASYNC`
-> (and, in step 7, `ALTER TABLE ASYNC ... VALIDATE CONSTRAINT`) runs as a
+> (and, in step 6, `ALTER TABLE ASYNC ... VALIDATE CONSTRAINT`) runs as a
 > background job you can watch in `sys.jobs`. A big table gets a new index
 > with no lock and no maintenance window.
 
@@ -547,7 +500,7 @@ It's an index-only scan, read backwards for the `DESC`: 20 rows read to return
 > knobs to reach for instead (`SET enable_sort` is "not supported"): you fix
 > plans with indexes.
 
-### Step 7 · A race, and foreign keys · 20:00–24:00
+### Step 6 · A race, and foreign keys · 20:00–24:00
 
 Two psql sessions side by side. The race: one person deletes a post at the
 same moment someone else comments on it.
@@ -655,7 +608,7 @@ were taken while either transaction ran, and you still can't create an orphan.
 - Full script with expected output: [`sql/07-fk-race.md`](sql/07-fk-race.md).
 </details>
 
-### Step 8 · JSONB, and an index on an expression · 24:00–27:00
+### Step 7 · JSONB, and an index on an expression · 24:00–27:00
 
 Every post has front matter in a JSONB column:
 
@@ -741,7 +694,7 @@ index, or model it as rows.
 > compression, but `pg_attribute.attcompression` is `l` (lz4) on `title`,
 > `body` and `metadata`. Large text and JSON values are stored compressed.
 
-### Step 9 · Scale to zero · 27:00–29:00
+### Step 8 · Scale to zero · 27:00–29:00
 
 Before change data capture, let's tidy up. In the console there are **two**
 clusters: the blog's, and the one I made in the console at the very start.
@@ -759,7 +712,7 @@ for.
 <details>
 <summary>Presenter notes</summary>
 
-- Delete the **console** one (the older one), not the blog's: step 10 needs
+- Delete the **console** one (the older one), not the blog's: step 9 needs
   the blog. The blog's ID is the start of `$PGHOST`, in pane A's
   `create-cluster` output.
 - If its deletion protection is off, skip the protection line or show where
@@ -768,7 +721,7 @@ for.
   then `aws dsql delete-cluster --identifier <console-cluster-id>`.
 </details>
 
-### Step 10 · Change data capture · 29:00–32:00
+### Step 9 · Change data capture · 29:00–32:00
 
 Every committed change, streamed to Kinesis. First, a stream for it. It's
 on-demand, so there's nothing to size, with 10 MiB records, because CDC splits
@@ -895,7 +848,7 @@ Region. More in
   insert has to come after it, or the change isn't captured.
 </details>
 
-### Step 11 · Multi-Region · 32:00–35:00
+### Step 10 · Multi-Region · 32:00–35:00
 
 Last console stop: **Create cluster → Multi-Region**. You choose the two Regions
 that take reads and writes, us-west-2 and us-east-1, and a **witness** Region,
@@ -914,6 +867,93 @@ blog runs on it.
 ---
 
 ## 35:00–40:00 · The polished app
+
+### The API, from one prompt · 35:00–36:00
+
+First, the API it runs on. With a schema in place, the application is the easy part. I'll ask Claude Code
+for it. It has the Aurora DSQL skill installed, which is the only DSQL-specific
+setup here:
+
+```prompt
+in ./blog build a typescript api for my blog on aurora dsql w/ drizzle orm. cluster endpoint is in $PGHOST, connect as admin. tables already exist so just read teh schema from the db. ops: list posts (newest first w/ author), get post (with its comments + each comenters username), create post, add comment. give me an http server and a small cli that calls it over http. then start the server and use the cli to chcek every op works
+```
+
+*(Typed the way people actually prompt, typos included. The agent doesn't mind.)*
+
+I'm not going to submit that. I did it earlier, so you don't have to wait for
+it. There's nothing DSQL-specific in the prompt beyond the word "DSQL": the
+skill supplies the rest. Here's the code it led to, as it runs in the finished
+app. First, the connection:
+
+```ts demo/api/src/db.ts
+import { drizzle } from "@aws/aurora-dsql-drizzle";
+import { AuroraDSQLPool } from "@aws/aurora-dsql-node-postgres-connector";
+...
+export function createDb({ host, user, max }: DbOptions) {
+  const pool = new AuroraDSQLPool({
+    host,
+    user,
+    max,
+    // DSQL closes connections after 60 minutes. Recycle well before that.
+    maxLifetimeSeconds: 50 * 60,
+...
+  return drizzle({ client: pool, schema });
+}
+```
+
+That's the
+[DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
+`@aws/aurora-dsql-drizzle`, on the DSQL connector for node-postgres. The
+connector makes a fresh IAM token for each new connection, so there's no
+password anywhere: not in the code, not in an environment variable.
+
+Then every write:
+
+```ts demo/api/src/queries.ts
+export async function addComment(
+...
+  return db.transactionWithRetry(
+    async (tx) => {
+      const [post] = await tx.select({ id: posts.id }).from(posts).where(eq(posts.id, postId));
+      if (!post) throw new HttpError(404, "post not found");
+...
+      const [row] = await tx
+        .insert(comments)
+        .values({ postId, userId: user.id, body: input.body })
+...
+    },
+    undefined,
+    WRITE_RETRY,
+  );
+}
+```
+
+`db.transactionWithRetry(...)` runs the whole transaction again if it loses a
+conflict. That's the race from step 6, handled for you.
+
+> Following along: [`demo/api`](demo/api) is this API, written for the same
+> schema. To run it against your cluster:
+> ```sh
+> cd demo && npm install
+> CLUSTER_ENDPOINT=$PGHOST DB_USER=admin npm run dev:api     # http://localhost:3000
+> ```
+
+<details>
+<summary>Presenter notes</summary>
+
+- F12 opens a terminal beside psql, starts Claude Code, and types the prompt.
+  The next F12 closes it. Then `db.ts`, then `queries.ts`: the real files, with
+  the lines above highlighted.
+- The prompt is never submitted: demo-it sends no Enter and no newline (the
+  paragraphs are typed as one). **Don't press Enter while Claude Code is on
+  screen**: it's in auto mode, so it would start building.
+- Kiro built the first version in rehearsal. In the first dry run Kiro took about 11
+  minutes. Its first version used plain `drizzle-orm` with the connector and
+  needed a nudge toward `@aws/aurora-dsql-drizzle`, and its CLI called the
+  database directly (hence "calls it over HTTP" in the prompt).
+</details>
+
+### The app, in two Regions · 36:00–40:00
 
 The same blog, finished ([`demo/`](demo)):
 - a React page on S3 and CloudFront;
@@ -1058,11 +1098,11 @@ Links:
 ## Cleaning up
 
 ```sh
-# Steps 1-11: your clusters (turn off deletion protection first if it's on)
+# Steps 1-10: your clusters (turn off deletion protection first if it's on)
 aws dsql update-cluster --identifier <id> --no-deletion-protection-enabled
 aws dsql delete-cluster --identifier <id>
 
-# Step 10: the CDC stream, then the Kinesis stream
+# Step 9: the CDC stream, then the Kinesis stream
 aws dsql delete-stream --cluster-identifier <cluster-id> --stream-identifier <stream-id>
 aws kinesis delete-stream --stream-name dat401-cdc
 

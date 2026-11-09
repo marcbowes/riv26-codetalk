@@ -24,9 +24,9 @@
          (range (and spec (> (length spec) 0) (split-string spec "-")))
          (from (if range (string-to-number (car range)) 1))
          ;; By default: up to DAT401_E2E_UNTIL (a talk step's title; default step
-         ;; 10, so the intro through step 8).
+         ;; 9, so the intro through step 7).
          (to (if range (string-to-number (cadr range))
-               (1- (cdr (assoc (or (getenv "DAT401_E2E_UNTIL") "Step 10 · Change data capture")
+               (1- (cdr (assoc (or (getenv "DAT401_E2E_UNTIL") "Step 9 · Change data capture")
                                dat401--steps-index)))))
          (out (getenv "DAT401_E2E_OUT")))
     ;; DAT401_E2E_STREAM: the test's own Kinesis stream, not the talk's.

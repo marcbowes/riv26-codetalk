@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Step 5: fill cluster A with sample data, generated server-side with
+# Step 4: fill the blog's cluster with sample data, generated server-side with
 # generate_series, so nothing big crosses the conference Wi-Fi.
 #
 #   PGHOST=<id>.dsql.us-west-2.on.aws ./sql/05-load-sample-data.sh
 #
 # Started as the script Kiro wrote in the first dry run (same approach), then
 # tuned: one IAM token and one psql session per worker instead of per batch, a
-# single metadata.category (step 8 indexes metadata->>'category'), and comments
+# single metadata.category (step 7 indexes metadata->>'category'), and comments
 # dated after their post.
 #
 # DSQL limits shape it: each INSERT is its own transaction of at most BATCH
@@ -17,7 +17,9 @@
 #   comments      (post_id, comment_id): the post comes from hashint8 of the
 #                 counter (1 to ~26 comments per post), comment_id is an md5 uuid
 #
-# Needs the real schema (sql/01-schema.sql). No foreign keys yet (step 7).
+# Needs the real schema (sql/01-schema.sql). No foreign keys yet (step 6).
+# Adds the first rows (sql/02-first-rows.sql: marc, raluca, the hello-dsql post
+# and its first comment) unless they're there already.
 #
 # Environment: PGHOST (required), AWS_REGION (default: from PGHOST),
 #   USERS=1000 POSTS=100000 COMMENTS=1000000 BATCH=3000 PARALLEL=8
@@ -165,6 +167,10 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "Loading into $PGHOST ($PARALLEL workers, $BATCH rows per transaction)"
 total_started=$SECONDS
+if [ "$(psql -X -At -c "SELECT count(*) FROM users WHERE username = 'marc'")" = 0 ]; then
+  psql -X -q -v ON_ERROR_STOP=1 -f "$(cd "$(dirname "$0")" && pwd)/02-first-rows.sql" >/dev/null
+  echo "  first rows   marc, raluca, the hello-dsql post and its first comment"
+fi
 load users "$USERS" users_sql
 load posts "$POSTS" posts_sql
 load comments "$COMMENTS" comments_sql

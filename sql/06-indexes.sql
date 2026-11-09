@@ -1,9 +1,9 @@
--- Step 6: add the missing index. CREATE INDEX ASYNC returns a job_id
+-- Step 5: add the missing index. CREATE INDEX ASYNC returns a job_id
 -- immediately and builds in the background without blocking writes.
--- Measured on the step-5 data (100k posts, 1M comments), October 2026.
+-- Measured on the step-4 data (100k posts, 1M comments), October 2026.
 
 -- No index for "comments for a post": comments' primary key starts with
--- post_id, so that's already a primary-key range scan (step 5's EXPLAIN:
+-- post_id, so that's already a primary-key range scan (step 4's EXPLAIN:
 -- ~0.5 ms, ~0.02 DPU). Keyed by comment id alone it was a full scan
 -- (~1,030 ms, ~191 DPU), and needed a (post_id, created_at) index to get to
 -- ~1.7 ms.

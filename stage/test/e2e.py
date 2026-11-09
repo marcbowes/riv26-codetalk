@@ -6,10 +6,10 @@ against a real cluster, then check what the panes show.
 
 Uses your normal Emacs config (Doom), so vterm and demo-it come from there.
 By default it runs the talk from the intro through step 7: creating the
-cluster (its endpoint read from the output), the schema, the step 4 code
-views, the loader, EXPLAIN, both async indexes (with <job_id> copied from
-the output), the foreign key race in two panes, and step 8's JSONB index,
-with every EXPLAIN highlight and Ctrl-R re-run. Afterwards it deletes the cluster step 1 created.
+cluster (its endpoint read from the output), both schemas, the loader,
+EXPLAIN, the covering index (job ids copied from the output), the foreign
+key race in two panes, and step 7's JSONB index, with every highlight and
+Ctrl-R re-run. Afterwards it deletes the cluster step 1 created.
 """
 import fcntl
 import json
@@ -93,8 +93,8 @@ def delete_created_cluster(pane_a):
 
 JUMP_CHECKS = {
     "finished", "cluster created in pane A", "both panes connected to psql",
-    "step 7: B's lookups copied in from A", "step 7: race 1 leaves orphans; validation fails",
-    "step 7: race 2 ends in OC000", "step 8: filter, then the expression index",
+    "race: B's lookups copied in from A", "race: race 1 leaves orphans; validation fails",
+    "race: race 2 ends in OC000", "jsonb: filter, then the expression index",
     "no unresolved placeholders typed",
 }
 
@@ -146,22 +146,22 @@ def main():
                                                   for m in marks)),
         ("ids and B's statements copied from the screen, not typed",
          int(read(out, "copies.txt").strip() or 0) >= 9),
-        ("step 7: B's lookups copied in from A", b.count("select id as post_id from posts where slug = 'hello-dsql'") >= 2),
-        ("step 7: race 1 leaves orphans; validation fails", "violates foreign key constraint" in a),
-        ("step 7: race 2 ends in OC000", "OC000" in b),
+        ("race: B's lookups copied in from A", b.count("select id as post_id from posts where slug = 'hello-dsql'") >= 2),
+        ("race: race 1 leaves orphans; validation fails", "violates foreign key constraint" in a),
+        ("race: race 2 ends in OC000", "OC000" in b),
         ("re-runs come from history (Ctrl-R), 2 of them, none typed instead",
          (read(out, "recalls.txt").split() or ["0", "0"]) == ["2", "0"]),
-        ("step 8: filter, then the expression index",
+        ("jsonb: filter, then the expression index",
          "Rows Removed by Filter" in a and "Index Scan Backward using posts_category_idx" in a),
         ("plan highlights: scan, sort, filter, cond, time",
          all(any(k in m for m in marks) for k in ("Scan using", "Sort Method", "Rows Removed", "Index Cond",
                                                    "Execution Time"))),
         ("pane B: exports pasted, then psql", "export PGPASSWORD" in b and "\n❯ psql" in b),
         ("DDL typed without indentation, in lower case", "(> id uuid primary key" in a),
-        ("step 2: comment inserted via :'post_id'", "values (:'post_id', 'First!');\nINSERT 0 1" in a),
+        ("rows: comment inserted via :'post_id'", "values (:'post_id', 'First!');\nINSERT 0 1" in a),
         ("tables created", a.count("CREATE TABLE") >= 3),
-        ("step 4 code shown", "db.transactionWithRetry(" in read(out, "code.txt")),
-        ("step 4 prompt typed into the agent, never submitted",
+        ("api: code shown", "db.transactionWithRetry(" in read(out, "code.txt")),
+        ("api: prompt typed into the agent, never submitted",
          read(out, "agent.txt").count("build a typescript api for my blog") == 1),
         ("real schema loaded with \\i", "INSERT 0 1" in a),
         ("loader ran in the shell pane", "Done in" in shell),
@@ -169,18 +169,20 @@ def main():
         ("<job_id> filled from the pane", bool(re.search(r"wait_for_job\('[a-z0-9]{26}'\)", a))),
         ("index jobs waited for", "succeeded" in a and " t" in a),
         ("covering index used", "Index Only Scan Backward using posts_recent_idx" in a),
-        ("step 10: CDC stream created, then active", '"status": "CREATING"' in events
+        ("cdc: stream created, then active", '"status": "CREATING"' in events
          and "wait stream-active" in events),
-        ("step 10: the comment shows up in the CDC viewer", "Hello from the stage" in events),
+        ("cdc: the comment shows up in the CDC viewer", "Hello from the stage" in events),
         ("no unresolved placeholders typed", not re.search(r"<(job_id|cluster-endpoint|cluster-id)>", a + b)),
     ]
-    if jump and "Step 10" in jump:
-        checks = [c for c in checks if c[0].startswith("step 10") or c[0] in
+    if jump and "Step 9" in jump:
+        checks = [c for c in checks if c[0].startswith("cdc:") or c[0] in
                   ("finished", "no unresolved placeholders typed")]
     elif jump:
         checks = [c for c in checks if c[0] in JUMP_CHECKS]
     else:
-        checks = [c for c in checks if not c[0].startswith("step 10")]
+        checks = [c for c in checks if not c[0].startswith("cdc:")]
+    if not read(out, "agent.txt"):      # the run stopped before the API step
+        checks = [c for c in checks if not c[0].startswith("api:")]
     width = max(len(c) for c, _ in checks)
     ok = True
     for name, passed in checks:

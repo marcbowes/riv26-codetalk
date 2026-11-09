@@ -1,7 +1,7 @@
 -- Steps 1-3, typed by hand on stage (cheat sheet: don't \i this).
 -- A deliberately small schema with the same key design as the real one.
--- At the end of step 3 it's thrown away for the real one:
---   DROP TABLE comments, posts;  \i sql/01-schema.sql  \i sql/02-first-rows.sql
+-- At the start of step 4 it's replaced by the real one:
+--   DROP TABLE comments, posts;  \i sql/01-schema.sql   (the loader adds 02-first-rows.sql)
 
 -- Step 1: posts, with a UUID primary key.
 CREATE TABLE posts (
@@ -43,13 +43,16 @@ SELECT * FROM posts;
 SELECT id AS post_id FROM posts WHERE title = 'Hello, DSQL' \gset
 INSERT INTO comments (post_id, body) VALUES (:'post_id', 'First!');
 
--- Step 3
-SELECT id, title, created_at FROM posts ORDER BY created_at DESC LIMIT 10;
+-- Step 3: fast, because there's nothing here.
+\timing on
+SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
 
 SELECT p.title, c.body, c.created_at
 FROM posts p JOIN comments c ON c.post_id = p.id;
 
--- Then the real schema, before step 5 loads sample data into it.
+-- Step 4: the real schema (the one above is missing what a real app needs),
+-- then sample data (05-load-sample-data.sh, which also adds 02-first-rows.sql).
 DROP TABLE comments, posts;
 \i sql/01-schema.sql
-\i sql/02-first-rows.sql
+\d+ posts
+\d+ users

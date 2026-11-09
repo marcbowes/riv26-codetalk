@@ -1,4 +1,4 @@
-# Step 7: the foreign key race
+# Step 6: the foreign key race
 
 Two psql sessions side by side, both connected to cluster A. Setup in either:
 

@@ -1,4 +1,4 @@
--- Step 5: after the sample data has loaded. VERBOSE adds the DPU cost
+-- Step 4: after the sample data has loaded. VERBOSE adds the DPU cost
 -- estimate at the bottom of the plan.
 
 -- Recent posts (the home page): full scan + top-N sort (~208 ms, ~121 DPU)
