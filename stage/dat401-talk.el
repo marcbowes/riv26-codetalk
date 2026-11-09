@@ -72,7 +72,7 @@ select title, created_at from posts order by created_at desc limit 20;"))
  ;; 18. run psql
  (dat401-run 'a "select p.title, c.body, c.created_at
 from posts p join comments c on c.post_id = p.id;")
- ;; 19. Step 4 · A real schema, a million rows, and a bad plan (TALK.md line 308): run psql
+ ;; 19. Step 4 · A real schema, a million rows, and a bad plan (TALK.md line 309): run psql
  (progn (dat401-section "Step 4 · A real schema, a million rows, and a bad plan") (dat401-layout 'a) (dat401-run 'a "drop table comments, posts;
 \\i sql/01-schema.sql"))
  ;; 20. run psql
@@ -100,7 +100,7 @@ select body, created_at from comments where post_id = :'post_id' order by create
  (dat401-highlight 'a "time" "dpu")
  ;; 30. stage: highlight scan cond
  (dat401-highlight 'a "scan" "cond")
- ;; 31. Step 5 · An index, without downtime (TALK.md line 444): run psql
+ ;; 31. Step 5 · An index, without downtime (TALK.md line 446): run psql
  (progn (dat401-section "Step 5 · An index, without downtime") (dat401-layout 'a) (dat401-run 'a "create index async posts_recent_idx on posts (created_at) include (title);"))
  ;; 32. run psql
  (dat401-run 'a "select job_id, status, object_name from sys.jobs where job_type = 'INDEX_BUILD';
@@ -112,7 +112,7 @@ select title, created_at from posts order by created_at desc limit 20;" "desc li
  (dat401-highlight 'a "time" "dpu")
  ;; 35. stage: highlight scan
  (dat401-highlight 'a "scan")
- ;; 36. Step 6 · A race, and foreign keys (TALK.md line 503): run psql · both panes (in A)
+ ;; 36. Step 6 · A race, and foreign keys (TALK.md line 505): run psql · both panes (in A)
  (progn (dat401-section "Step 6 · A race, and foreign keys") (dat401-layout 'a) (dat401-run 'a "select id as post_id from posts where slug = 'hello-dsql' \\gset
 select id as user_id from users where username = 'raluca' \\gset"))
  ;; 37. copy into B
@@ -165,7 +165,7 @@ select id as user_id from users where username = 'raluca' \\gset")
  (dat401-run 'a "commit;")
  ;; 56. race psql · Pane B
  (dat401-run 'b "commit;")
- ;; 57. Step 7 · JSONB, and an index on an expression (TALK.md line 611): run psql
+ ;; 57. Step 7 · JSONB, and an index on an expression (TALK.md line 613): run psql
  (progn (dat401-section "Step 7 · JSONB, and an index on an expression") (dat401-layout 'a) (dat401-run 'a "select title, metadata from posts limit 2;"))
  ;; 58. run psql
  (dat401-run 'a "explain analyze verbose
@@ -192,7 +192,7 @@ order by created_at desc limit 20;" "= 'databases'")
  (dat401-run 'a "explain analyze select title from posts where metadata->'category' = '\"databases\"' limit 20;")
  ;; 66. stage: highlight scan filter
  (dat401-highlight 'a "scan" "filter")
- ;; 67. Step 9 · Change data capture (TALK.md line 724): run shell · pane events
+ ;; 67. Step 9 · Change data capture (TALK.md line 726): run shell · pane events
  (progn (dat401-section "Step 9 · Change data capture") (dat401-layout 'a 'events) (dat401-run 'events "aws kinesis create-stream --stream-name dat401-cdc --stream-mode-details StreamMode=ON_DEMAND --max-record-size-in-ki-b 10240"))
  ;; 68. run shell · pane events
  (dat401-run 'events "aws iam get-role --role-name dat401-cdc --query Role.Arn")
@@ -210,7 +210,7 @@ order by created_at desc limit 20;" "= 'databases'")
  (dat401-run 'a "select id as post_id from posts where slug like 'post-%' limit 1 \\gset")
  ;; 75. run psql
  (dat401-run 'a "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Hello from the stage');")
- ;; 76. The API, from one prompt (TALK.md line 871): prompt, typed into the agent
+ ;; 76. The API, from one prompt (TALK.md line 873): prompt, typed into the agent
  (progn (dat401-section "The API, from one prompt") (dat401-layout 'a) (dat401-agent "in ./blog build a typescript api for my blog on aurora dsql w/ drizzle orm. cluster endpoint is in $PGHOST, connect as admin. tables already exist so just read teh schema from the db. ops: list posts (newest first w/ author), get post (with its comments + each comenters username), create post, add comment. give me an http server and a small cli that calls it over http. then start the server and use the cli to chcek every op works"))
  ;; 77. close the agent
  (dat401-quit-agent)
@@ -218,7 +218,7 @@ order by created_at desc limit 20;" "= 'databases'")
  (dat401-code "demo/api/src/db.ts" '((4 . 5) (18 . 24) (36 . 37)))
  ;; 79. code demo/api/src/queries.ts
  (dat401-code "demo/api/src/queries.ts" '((204 . 204) (209 . 212) (215 . 217) (221 . 225)))
- ;; 80. Scale (TALK.md line 1009): run shell
+ ;; 80. Scale (TALK.md line 1011): run shell
  (progn (dat401-section "Scale") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
 ./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""))
  )

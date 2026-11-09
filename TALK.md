@@ -299,8 +299,9 @@ SELECT p.title, c.body, c.created_at
 FROM posts p JOIN comments c ON c.post_id = p.id;
 ```
 
-A join, an `ORDER BY`, a `LIMIT`: nothing to learn, and a couple of
-milliseconds each. That's the point.
+A join, an `ORDER BY`, a `LIMIT`: nothing to learn, and a few tens of
+milliseconds each, most of it the trip from this laptop to the Region and
+back. That's the point.
 
 Hold up, though. They're fast because there's nothing here: two posts and a
 comment.
@@ -373,10 +374,11 @@ The home page again (Ctrl-R in psql):
 SELECT title, created_at FROM posts ORDER BY created_at DESC LIMIT 20;
 ```
 ```
-Time: 214.316 ms
+Time: 238.015 ms
 ```
 
-Kind of slow. **Look at the query plan:**
+Kind of slow: about six times what it was with two posts. **Look at the query
+plan:**
 
 ```sql
 EXPLAIN ANALYZE VERBOSE
