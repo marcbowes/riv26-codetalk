@@ -257,6 +257,7 @@ if ((SMOKE && FAILS == 0)); then
 fi
 
 echo
+printf 'Site       %s\nDashboard  %s\n\n' "$WEB" "$(j .dashboardUrl)"
 if ((FAILS)); then
   printf '\033[31m%d failed\033[0m, %d warnings\n' "$FAILS" "$WARNS"
   exit 1

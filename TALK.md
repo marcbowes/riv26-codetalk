@@ -993,7 +993,9 @@ blog that's 90% reads, that's the right trade-off.
 <summary>Presenter notes</summary>
 
 - `demo/preflight.sh` ~30 minutes before warms both APIs, so the first click
-  isn't a cold start.
+  isn't a cold start. It ends by printing the site and dashboard URLs. They're
+  in `demo/outputs.json`, which isn't committed: this repo is public, and the
+  site's API takes load from anyone who has the address.
 - One sentence on the architecture: one CloudFront distribution serves the page
   from S3 and routes `/api/<region>/*` to an IAM-authenticated Lambda function URL
   in each Region (only the distribution can call them).

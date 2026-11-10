@@ -218,7 +218,7 @@ order by created_at desc limit 20;" "= 'databases'")
  (dat401-code "demo/api/src/db.ts" '((4 . 5) (18 . 24) (36 . 37)))
  ;; 79. code demo/api/src/queries.ts
  (dat401-code "demo/api/src/queries.ts" '((204 . 204) (209 . 212) (215 . 217) (221 . 225)))
- ;; 80. Scale (TALK.md line 1011): run shell
+ ;; 80. Scale (TALK.md line 1013): run shell
  (progn (dat401-section "Scale") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
 ./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""))
  )
