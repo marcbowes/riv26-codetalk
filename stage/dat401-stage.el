@@ -799,6 +799,8 @@ BEFORE, the text typed ahead of it on this line)."
 with no entry is copied from wherever it last appears.")
 
 (defvar dat401--copies 0 "How many copies have been acted out (for tests).")
+(defvar dat401--copy-misses nil
+  "(VALUE . SELECTED) for each copy whose selection wasn't VALUE (for tests).")
 (defvar dat401--recalls (cons 0 0) "(FOUND . TYPED-INSTEAD) Ctrl-R re-runs (for tests).")
 
 (defun dat401--id-like-p (value)
@@ -888,6 +890,10 @@ changes, and positions found before that select the wrong text."
                 (push-mark start t t)
                 (dat401--sleep (dat401--pause 280 0.3))
                 (goto-char (cdr found))
+                ;; What's selected should be what gets pasted (tests count misses).
+                (unless (equal (replace-regexp-in-string "\n" "" (car (dat401--unwrapped start (cdr found))))
+                               (replace-regexp-in-string "\n" "" value))
+                  (push (cons value (buffer-substring-no-properties start (cdr found))) dat401--copy-misses))
                 (dat401--sleep (dat401--pause 550 0.3))
                 (deactivate-mark))
             (dat401--term-copy-mode nil))))

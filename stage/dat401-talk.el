@@ -215,7 +215,7 @@ order by created_at desc limit 20;" "= 'databases'")
  ;; 75. run psql
  (dat401-run 'a "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Hello from the stage');")
  ;; 76. Multi-Region, in a minute (TALK.md line 861): run shell
- (progn (dat401-section "Multi-Region, in a minute") (dat401--show 'shell) (dat401-run 'shell "open https://console.aws.amazon.com/dsql/home?region=us-west-2"))
+ (progn (dat401-section "Multi-Region, in a minute") (dat401--show 'shell) (dat401-run 'shell "open https://us-west-2.console.aws.amazon.com/dsql/create-cluster/home"))
  ;; 77. The API, from one prompt (TALK.md line 894): prompt, shown in the agent
  (progn (dat401-section "The API, from one prompt") (dat401-agent "the blog schema is already in the dsql cluster at $PGHOST, read it from teh db. build a typescript crud api for it w/ hono + drizzle orm, using the aurora dsql drizzle adapter. ops: list posts newest first w/ author, get a post w/ its comments + each commenters username, create post, add comment. retry writes on occ conflicts. deploy it to lambda in us-west-2 and us-east-1, one function per region talking to its own regions endpoint, then call every op in both regions to check it works"))
  ;; 78. close the agent

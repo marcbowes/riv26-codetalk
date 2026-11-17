@@ -863,11 +863,11 @@ database, and keeps going when one of them goes away.
 Back to the console:
 
 ```sh
-open https://console.aws.amazon.com/dsql/home?region=us-west-2
+open https://us-west-2.console.aws.amazon.com/dsql/create-cluster/home
 ```
 
-**Create cluster → Multi-Region.** It's the same page as before, with two more
-choices:
+It opens on **Create cluster**. Choose **Multi-Region**: it's the same page as
+before, with two more choices:
 - the second Region that takes reads and writes: us-east-1;
 - a **witness** Region: us-east-2. It stores a limited window of encrypted
   transaction logs, which keeps the cluster durable and available if a Region
