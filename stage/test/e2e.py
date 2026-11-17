@@ -91,7 +91,11 @@ def delete_created_cluster(pane_a):
     if not m:
         return None
     ident = m[-1]
-    aws = ["aws", "dsql", "--region", os.environ.get("AWS_REGION", "us-west-2")]
+    # The Region it was made in, from its ARN (the panes' AWS_REGION), not
+    # whatever this shell has.
+    arn = re.search(r'"arn": "arn:aws[a-z-]*:dsql:([a-z0-9-]+):\d+:cluster/%s"' % ident, pane_a)
+    region = arn.group(1) if arn else "us-west-2"
+    aws = ["aws", "dsql", "--region", region]
     subprocess.run(aws + ["update-cluster", "--identifier", ident, "--no-deletion-protection-enabled"],
                    check=False, capture_output=True)
     r = subprocess.run(aws + ["delete-cluster", "--identifier", ident], capture_output=True, text=True)
