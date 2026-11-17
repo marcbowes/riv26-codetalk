@@ -361,6 +361,10 @@ fn error_cell(total: u64, recent: u64, class: Class) -> Cell<'static> {
 fn region_cells(r: &RegionRow, v: &View, total_row: bool, show_db: bool) -> Vec<Cell<'static>> {
     let label_style = if total_row {
         bold(Color::Gray)
+    } else if r.down {
+        bold(Color::LightRed)
+    } else if r.returning {
+        bold(Color::Yellow)
     } else {
         bold(Color::White)
     };
@@ -561,6 +565,8 @@ mod tests {
             errors: [100, 0, 3, 1, 0, 0],
             recent: [10, 0, 3, 0, 0, 0],
             backing_off: false,
+            down: false,
+            returning: false,
             skipped: 0,
         }
     }

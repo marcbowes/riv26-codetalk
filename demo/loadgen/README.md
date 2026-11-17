@@ -35,7 +35,7 @@ sparkline, and a per-Region table.
 
 - **TPS** is successful (2xx) responses per second, over a sliding one-second
   window that updates four times a second.
-- **rate** is what the generator is sending: it ramps to the target, and
+- **rate** is what the generator is sending (after any failover): it ramps to the target, and
   turns yellow while it is backing off after throttling.
 - **in-flight** counts requests sent but not yet answered. It is an upper
   bound on that Region's Lambda concurrency.
@@ -82,6 +82,7 @@ The binary's full `--help` explains every flag. The important ones:
 | `--duration` | until Ctrl-C | `90s`, `10m`, `1h30m`. |
 | `--mix R/W` | `90/10` | Plus `--list-share` (40), `--category-share` (50), `--new-post-share` (0). |
 | `--connections N` | 2048 | Max connections, which equals max in-flight requests, per Region. |
+| `--no-failover` | failover on | Keep sending a failing Region its share (see [Failover](#failover)). |
 | `--timeout`, `--connect-timeout` | 10 s, 5 s | |
 | `--threads N` | CPUs | Tokio worker threads. |
 | `--plain`, `--report FILE`, `--title TEXT` | | |
@@ -131,8 +132,36 @@ which exercises multi-Region strong consistency: a 404 there would be a bug.
   - If at least 0.5% of a second's responses in a Region were throttled,
     that Region's rate is cut to 85%, held for 3 s, then raised by 2% of the
     target per second until it is back on the ramp.
-  - 5xx, timeouts and connection errors are recorded but never slow the
-    generator down.
+  - 5xx, timeouts and connection errors never slow the generator down.
+    They can move a Region's traffic elsewhere, though: see below.
+
+### Failover
+
+With `--rps`, a Region whose API stops answering has its traffic sent to
+the healthy Regions instead, as a multi-Region client would. The total stays
+at the target. In the talk, an FIS experiment makes us-east-1's DSQL refuse
+connections, so its API answers 503 at once and us-west-2 takes everything.
+
+- **Down.** Once a second, a Region counts as down if at least half of the
+  last second's responses (and at least 10) were 5xx, timeouts or connection
+  errors. 4xx and throttling don't count.
+- **Probing.** A down Region still gets 1% of its own traffic (at least
+  5 req/s) to notice when it's back. The rest goes to the Regions that are
+  up, spread evenly. If none is, nothing is rerouted.
+- **Back.** After 3 seconds in a row of probes at least 90% OK (at least two
+  each), its traffic moves back linearly over 10 s, so its Lambda
+  environments reconnect to DSQL a few at a time.
+- **On screen.** A down Region's name turns red and a returning one's yellow.
+  `rate` is what each Region is actually sent after rerouting. The Events
+  panel says when traffic moves and when it moves back. The `--plain` line
+  marks the Region `DOWN` or `RETURNING`. The report has each Region's
+  `failovers` count and a per-second `state`.
+- **Timing.** The switch comes at the next whole second after the failures
+  start, so expect one second at roughly half the TPS, then the full target
+  again from the healthy Region.
+
+`--no-failover` turns it off: a failing Region keeps its share, and its
+failures just count.
 
 ## Quotas and connection-rate notes (why the ramp is gentle)
 

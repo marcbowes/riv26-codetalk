@@ -78,7 +78,59 @@
   (should (equal (dat401--normalize '(shell)) '(a shell)))
   (should (equal (dat401--normalize '(events a)) '(a events)))
   (should (equal (dat401--normalize '(load a)) '(load)))
-  (should (equal (dat401--normalize '(a)) '(a))))
+  (should (equal (dat401--normalize '(a)) '(a)))
+  ;; The finale: the agent full screen, the two Regions side by side, and a
+  ;; shell strip that joins whatever's on screen.
+  (should (equal (dat401--normalize '(claude)) '(claude)))
+  (should (equal (dat401--normalize '(us-west-2)) '(us-west-2 us-east-1)))
+  (should (equal (dat401--normalize '(shell us-west-2 us-east-1)) '(us-west-2 us-east-1 shell)))
+  (should (equal (dat401--normalize '(shell load)) '(load shell)))
+  ;; A shell asked for beside the events viewer replaces it; the viewer
+  ;; asked for beside the shell replaces that.
+  (should (equal (dat401--normalize '(shell a events)) '(a shell)))
+  (should (equal (dat401--normalize '(events a shell)) '(a events))))
+
+(ert-deftest dat401-region-panes ()
+  (should (dat401--region-pane-p 'us-east-1))
+  (should-not (dat401--region-pane-p 'shell))
+  (should (equal (dat401--buffer-name 'us-east-1) "*us-east-1*"))
+  (should (equal (dat401--buffer-name 'a) "*psql A*"))
+  ;; A Region's pane signs for that Region and doesn't inherit the build's PGHOST.
+  (let ((dat401--vars (make-hash-table :test 'equal)))
+    (puthash "cluster-endpoint" "abc.dsql.us-west-2.on.aws" dat401--vars)
+    (should (member "AWS_REGION=us-east-1" (dat401--env 'us-east-1)))
+    (should-not (cl-some (lambda (e) (string-prefix-p "PGHOST=" e)) (dat401--env 'us-east-1)))
+    (should (member "PGHOST=abc.dsql.us-west-2.on.aws" (dat401--env 'a)))))
+
+(ert-deftest dat401-values-from-outputs-json ()
+  (let* ((dir (make-temp-file "dat401-repo" t))
+         (dat401-repo dir))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "demo" dir))
+          (with-temp-file (expand-file-name "demo/outputs.json" dir)
+            (insert "{\"webUrl\": \"https://d111.cloudfront.net\", \"fis\": {\"templateId\": \"EXTabc123XYZ9\"},"
+                    " \"regions\": [{\"region\": \"us-west-2\", \"clusterEndpoint\": \"w.dsql.us-west-2.on.aws\"},"
+                    " {\"region\": \"us-east-1\", \"clusterEndpoint\": \"e.dsql.us-east-1.on.aws\"}]}"))
+          (should (equal (dat401--output-value "blog-url") "https://d111.cloudfront.net"))
+          (should (equal (dat401--output-value "fis-template-id") "EXTabc123XYZ9"))
+          (should (equal (dat401--output-value "us-east-1-endpoint") "e.dsql.us-east-1.on.aws"))
+          (should-not (dat401--output-value "job_id"))
+          (should (equal (dat401--value "us-west-2-endpoint" 'a) "w.dsql.us-west-2.on.aws")))
+      (delete-directory dir t))))
+
+(ert-deftest dat401-fis-experiment-id-is-scraped ()
+  (should (equal (dat401--last-match (cdr (assoc "fis-experiment-id" dat401--scraped))
+                                     "% aws fis start-experiment --experiment-template-id EXT9aBcDeFgHiJkLm\nEXPa1B2c3D4e5F6g7\n% ")
+                 "EXPa1B2c3D4e5F6g7")))
+
+(ert-deftest dat401-cue-is-a-quiet-note ()
+  (let ((shown '()))
+    (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) shown))))
+      (let ((dat401--fast nil)) (dat401-cue "browser"))
+      (let ((dat401--fast t)) (dat401-cue "browser")))
+    ;; Shown once: never while fast-forwarding.
+    (should (equal shown '("\u2192 browser")))))
 
 (ert-deftest dat401-generated-steps-load ()
   (load (expand-file-name "stage/dat401-talk.el" dat401-repo) nil t)
@@ -188,22 +240,31 @@
       (kill-buffer buf))))
 
 (ert-deftest dat401-agent-prompt-is-never-submitted ()
-  ;; Typed into the agent's frame with no Enter and no newline anywhere.
-  (let ((sent '()) (returns 0))
-    (cl-letf (((symbol-function 'dat401-open) #'ignore)
+  ;; Full screen, the prompt pasted in one go (not typed), no Enter and no
+  ;; newline anywhere; closing it puts back what was on screen.
+  (let ((sent '()) (returns 0) (layouts '()) (dat401--layout '(us-west-2 us-east-1)))
+    (cl-letf (((symbol-function 'dat401-layout) (lambda (&rest ps) (push ps layouts) (setq dat401--layout ps)))
               ((symbol-function 'dat401-unhighlight) #'ignore)
+              ((symbol-function 'dat401--ready) #'ignore)
+              ((symbol-function 'dat401--pause-for) #'ignore)
               ((symbol-function 'dat401--pane-text) (lambda (_) "⏵⏵ auto mode on (shift+tab to cycle)"))
               ((symbol-function 'dat401--sleep) #'ignore)
-              ((symbol-function 'dat401--send) (lambda (_p s &rest _) (push s sent)))
+              ((symbol-function 'dat401--send) (lambda (_p s &optional paste) (push (cons s paste) sent)))
               ((symbol-function 'dat401--pane) (lambda (_) (current-buffer)))
+              ((symbol-function 'dat401--kill-terminal) #'ignore)
               ((symbol-function 'vterm-send-return) (lambda () (cl-incf returns))))
-      (dat401-agent "In ./blog, build an API.\n\nOperations: ListPosts.\nStart the server."))
-    (let ((typed (apply #'concat (nreverse sent))))
-      ;; The only Enter is the one that starts the agent.
-      (should (= returns 1))
-      (should (string-prefix-p "claude" typed))
-      (should (string-suffix-p "In ./blog, build an API. Operations: ListPosts. Start the server." typed))
-      (should-not (string-match-p "[\n\r]" typed)))))
+      (dat401-agent "In ./blog, build an API.\n\nOperations: ListPosts.\nStart the server.")
+      (should (equal (car layouts) '(claude)))
+      (let* ((sent (reverse sent))
+             (typed (apply #'concat (mapcar #'car (butlast sent))))
+             (prompt (car (last sent))))
+        ;; The only Enter is the one that starts the agent.
+        (should (= returns 1))
+        (should (equal typed "claude"))
+        (should (equal prompt (cons "In ./blog, build an API. Operations: ListPosts. Start the server." t)))
+        (should-not (string-match-p "[\n\r]" (car prompt))))
+      (dat401-quit-agent)
+      (should (equal (car layouts) '(us-west-2 us-east-1))))))
 
 (ert-deftest dat401-highlight-dpu-total ()
   (let ((dat401--marks nil)
@@ -275,7 +336,11 @@
 
 (ert-deftest dat401-ids-are-never-typed ()
   (should (dat401--id-like-p "bk7zsxu5xjh6pgsaskjqxpb5ty"))
-  (should-not (dat401--id-like-p "dat401-cdc")))
+  (should (dat401--id-like-p "EXT9aBcDeFgHiJkLm"))     ; FIS template and experiment ids
+  (should (dat401--id-like-p "EXPa1B2c3D4e5F6g7"))
+  (should (dat401--id-like-p "https://d111.cloudfront.net"))
+  (should-not (dat401--id-like-p "dat401-cdc"))
+  (should-not (dat401--id-like-p "Nice post!")))
 
 (ert-deftest dat401-copy-into-copies-each-line-from-the-other-pane ()
   (let* ((a (get-buffer-create "*psql A*"))

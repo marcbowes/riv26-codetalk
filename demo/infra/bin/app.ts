@@ -7,11 +7,13 @@
 //   Dat401-Web                               S3 + CloudFront UI (REGION_A)
 //   Dat401-Dashboard                         CloudWatch dashboard (REGION_A)
 //   Dat401-Loadgen                           EC2 load generator host (REGION_A)
+//   Dat401-Fis-<B>                           FIS template: REGION_B's DSQL refuses connections
 import * as cdk from "aws-cdk-lib";
 import { ApiStack } from "../lib/api-stack";
 import { ClusterStack } from "../lib/cluster-stack";
 import { clusterIdFromArn, readConfig } from "../lib/config";
 import { DashboardStack } from "../lib/dashboard-stack";
+import { FisStack } from "../lib/fis-stack";
 import { LoadgenStack } from "../lib/loadgen-stack";
 import { STACKS } from "../lib/names";
 import { WebStack } from "../lib/web-stack";
@@ -58,6 +60,13 @@ if (cfg.clusterArns) {
     repoUrl: cfg.repoUrl,
     instanceType: cfg.loadgenInstanceType,
     ...(cfg.loadgenAz ? { availabilityZone: cfg.loadgenAz } : {}),
+  });
+
+  // The finale takes REGION_B (us-east-1, the right-hand column) out.
+  new FisStack(app, STACKS.fis(cfg.regionB), {
+    env: env(cfg.regionB),
+    description: `DAT401 demo: FIS experiment that makes ${cfg.regionB}'s DSQL endpoint refuse connections`,
+    clusterArn: arns[cfg.regionB] as string,
   });
 
   // Needs both function URLs (one is another Region's output), so deploy.sh passes them in.

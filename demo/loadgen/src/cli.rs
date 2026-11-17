@@ -44,6 +44,15 @@ counted, which means the generator (or the API) is saturated.
 Size it at about target req/s per Region x worst-case latency in seconds, with headroom. If a \
 server does negotiate HTTP/2, requests are spread over ceil(N/100) multiplexed connections instead.";
 
+const FAILOVER_LONG_HELP: &str = "\
+Turn off Region failover, which is on by default with --rps.
+
+With failover, a Region counts as down when at least half of a second's responses (and at least \
+10) are 5xx, timeouts or connection errors; 4xx and throttling don't count. Its traffic then goes \
+to the healthy Regions, except 1% (at least 5 req/s) that keeps probing it. After 3 seconds in a \
+row of probes at least 90% OK, its traffic moves back over 10 s. With --no-failover a failing \
+Region keeps its share, and the failures just count.";
+
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "loadgen",
@@ -160,6 +169,10 @@ pub struct Args {
         help_heading = "Bootstrap"
     )]
     pub refresh: f64,
+
+    /// Don't move a failing Region's traffic to the healthy ones (open loop); see --help
+    #[arg(long, help_heading = "Load", long_help = FAILOVER_LONG_HELP)]
+    pub no_failover: bool,
 
     /// Max connections (= in-flight requests) per Region; see --help
     #[arg(

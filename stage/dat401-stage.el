@@ -80,14 +80,14 @@ minute over a line, unevenly), 0.5 twice as fast, 0 instant."
   "What step 4 types to start the AI agent in its frame."
   :type 'string)
 
-(defcustom dat401-agent-typing-speed 0.45
-  "Typing delays for the AI prompt, relative to `dat401-typing-speed'.
-Prose goes in faster than SQL."
-  :type 'number)
-
 (defcustom dat401-agent-ready "shift\\+tab to cycle\\|for shortcuts"
   "Seen in the agent's frame once it's ready for a prompt."
   :type 'regexp)
+
+(defcustom dat401-regions '(us-west-2 us-east-1)
+  "The finished app's two Regions, left to right. A pane named after a
+Region (`us-west-2') is a terminal set up for that Region."
+  :type '(repeat symbol))
 
 (defcustom dat401-wait-timeout 180
   "Seconds to wait for psql to come back before typing the next statement."
@@ -180,20 +180,27 @@ ask. If killing still fails, BUF is just buried: it's off screen anyway."
   '((a . "psql A") (b . "psql B") (shell . "shell") (events . "events") (load . "load")
     (claude . "claude")))
 
-(defun dat401--buffer-name (pane)
-  (format "*%s*" (alist-get pane dat401--pane-titles)))
+(defun dat401--region-pane-p (pane)
+  "Is PANE one of the finished app's Regions (a terminal for that Region)?"
+  (and pane (symbolp pane)
+       (string-match-p "\\`[a-z][a-z]-[a-z]+-[0-9]\\'" (symbol-name pane))))
 
-(defun dat401--env ()
-  "Environment for new panes.
-AWS settings always; psql settings once the cluster's endpoint is known."
+(defun dat401--buffer-name (pane)
+  (format "*%s*" (or (alist-get pane dat401--pane-titles) (symbol-name pane))))
+
+(defun dat401--env (&optional pane)
+  "Environment for a new PANE.
+AWS settings always; psql settings once the cluster's endpoint is known.
+A Region's pane gets that Region and no PGHOST: it pastes its own."
   (append
    (list (concat "AWS_PROFILE=" dat401-aws-profile)
-         (concat "AWS_REGION=" dat401-aws-region)
+         (concat "AWS_REGION=" (if (dat401--region-pane-p pane) (symbol-name pane) dat401-aws-region))
          ;; No pager: EXPLAIN plans should just print.
          "PSQL_PAGER=cat" "PAGER=cat"
          ;; No zsh "%" partial-line marker when vterm resizes a new pane.
          "PROMPT_EOL_MARK=")
-   (when-let* ((endpoint (gethash "cluster-endpoint" dat401--vars)))
+   (when-let* (((not (dat401--region-pane-p pane)))
+               (endpoint (gethash "cluster-endpoint" dat401--vars)))
      (list (concat "PGHOST=" endpoint)
            "PGUSER=admin" "PGDATABASE=postgres" "PGSSLMODE=require"))
    ;; Not "inside" another Claude Code session, even if Emacs was started from one.
@@ -208,7 +215,7 @@ AWS settings always; psql settings once the cluster's endpoint is known."
   (let ((name (dat401--buffer-name pane)))
     (or (get-buffer name)
         (let ((default-directory (file-name-as-directory dat401-repo))
-              (process-environment (dat401--env)))
+              (process-environment (dat401--env pane)))
           (let ((buf (dat401--term-new name)))
             (with-current-buffer buf
               (setq dat401--this-pane pane
@@ -220,15 +227,28 @@ AWS settings always; psql settings once the cluster's endpoint is known."
 ;;;; Layout
 
 (defun dat401--normalize (panes)
-  (cond ((memq 'load panes) '(load))
-        ((memq 'b panes) '(a b))
-        ((memq 'claude panes) '(a claude))
-        ((memq 'events panes) '(a events))
-        ((memq 'shell panes) '(a shell))
-        (t '(a))))
+  "The layout that shows PANES. The first is the one just asked for: a shell
+asked for beside the events viewer replaces it."
+  (let ((want (car panes)))
+    (cond ((equal panes '(claude)) '(claude))
+          ((memq 'load panes) (if (memq 'shell panes) '(load shell) '(load)))
+          ((cl-some #'dat401--region-pane-p panes)
+           (append dat401-regions (when (memq 'shell panes) '(shell))))
+          ((memq 'b panes) '(a b))
+          ((memq 'claude panes) '(a claude))
+          ((and (eq want 'shell) (memq 'shell panes)) '(a shell))
+          ((memq 'events panes) '(a events))
+          ((memq 'shell panes) '(a shell))
+          (t '(a)))))
+
+(defun dat401--strip-lines ()
+  "Height of a shell strip along the bottom: a fifth of the frame."
+  (max 6 (floor (* 0.2 (window-total-height)))))
 
 (defun dat401-layout (&rest panes)
-  "Show PANES: one of (a), (a b), (a shell), (a events) or (load)."
+  "Show PANES: one of (a), (a b), (a shell), (a events), (a claude), (claude),
+(load), (load shell), or the two Regions side by side, with or without a
+shell along the bottom."
   (let ((panes (dat401--normalize panes)))
     (delete-other-windows)
     (switch-to-buffer (dat401--pane (car panes)))
@@ -237,7 +257,13 @@ AWS settings always; psql settings once the cluster's endpoint is known."
       (`(a claude) (set-window-buffer (split-window-right) (dat401--pane 'claude)))
       (`(a events) (set-window-buffer (split-window-right) (dat401--pane 'events)))
       (`(a shell) (set-window-buffer (split-window-below (- (floor (window-total-height) 3)))
-                                     (dat401--pane 'shell))))
+                                     (dat401--pane 'shell)))
+      (`(load shell) (set-window-buffer (split-window-below (- (dat401--strip-lines)))
+                                        (dat401--pane 'shell)))
+      ((guard (dat401--region-pane-p (car panes)))
+       (when (memq 'shell panes)
+         (set-window-buffer (split-window-below (- (dat401--strip-lines))) (dat401--pane 'shell)))
+       (set-window-buffer (split-window-right) (dat401--pane (cadr panes)))))
     (setq dat401--layout panes)
     (dat401--tidy panes)))
 
@@ -351,32 +377,41 @@ lines are highlighted; the lines between them are dimmed."
 
 ;;;; The AI agent (step 4)
 
+(defvar dat401--before-agent nil "The layout to put back when the agent closes.")
+
 (defun dat401-agent (text)
-  "Open a terminal beside pane A, start the agent (Claude Code) in it, and
-type TEXT into its prompt. It's never submitted: no Enter and no newline is
-ever sent (paragraphs are typed as one), and `dat401-quit-agent' closes it."
+  "Start the agent (Claude Code) full screen, with TEXT already in its prompt:
+pasted in one go, so you can narrate it rather than wait for it. It's never
+submitted: no Enter and no newline is sent (paragraphs are joined), and
+`dat401-quit-agent' closes it."
   (unless dat401--fast
-  (dat401-unhighlight)
-  (setq dat401--hurry nil)
-  (dat401-open 'claude)
-  (dat401--type-line 'claude dat401-agent-command)
-  (dat401--wait-for (lambda () (string-match-p dat401-agent-ready (dat401--pane-text 'claude))) 30)
-  (setq dat401--hurry nil)
-  (dat401--sleep (dat401--pause 1500 0.3))
-  (let ((text (replace-regexp-in-string "[ \t]*\n[ \t\n]*" " " (string-trim text)))
-        (dat401-typing-speed (* dat401-typing-speed dat401-agent-typing-speed)))
-    (dolist (cd (dat401--delays text))
-      (dat401--send 'claude (car cd))
-      (dat401--sleep (cdr cd))))
-  (setq dat401--hurry nil)))
+    (dat401-unhighlight)
+    (setq dat401--hurry nil
+          dat401--before-agent (or (remq 'view (remq 'claude dat401--layout)) '(a)))
+    (dat401-layout 'claude)
+    (dat401--ready 'claude)
+    (dat401--type-line 'claude dat401-agent-command)
+    (dat401--wait-for (lambda () (string-match-p dat401-agent-ready (dat401--pane-text 'claude))) 30)
+    (dat401--pause-for 0.6)
+    (dat401--send 'claude (replace-regexp-in-string "[ \t]*\n[ \t\n]*" " " (string-trim text)) t)
+    (setq dat401--hurry nil)))
 
 (defun dat401-quit-agent ()
-  "Close the agent's frame without submitting anything: the window goes
-first, then the agent, quietly."
+  "Close the agent without submitting anything: put back what was on screen
+first, then end the agent, quietly."
   (when (memq 'claude dat401--layout)
-    (apply #'dat401-layout (or (remq 'claude dat401--layout) '(a))))
+    (apply #'dat401-layout (or dat401--before-agent (remq 'claude dat401--layout) '(a))))
+  (setq dat401--before-agent nil)
   (when-let* ((buf (get-buffer (dat401--buffer-name 'claude))))
     (ignore-errors (dat401--kill-terminal buf))))
+
+(defun dat401-cue (what)
+  "Remind the presenter of a move only they can make (WHAT: \"browser\", a
+switch to the browser): a quiet note in the echo area, once the command
+before it is done. The clicker can't follow focus out of Emacs."
+  (unless dat401--fast
+    (let ((message-log-max nil))
+      (message "%s" (propertize (concat "\u2192 " what) 'face 'shadow)))))
 
 ;;;; Placeholders
 
@@ -426,8 +461,31 @@ first, then the agent, quietly."
                                              dat401--stale-endpoints :test #'equal)))))
            '(a b shell)))
 
+(defun dat401--outputs ()
+  "The finished app's demo/outputs.json (written by demo/deploy.sh), or nil."
+  (let ((file (expand-file-name "demo/outputs.json" dat401-repo)))
+    (when (file-readable-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (json-parse-buffer :object-type 'alist :array-type 'list)))))
+
+(defun dat401--output-value (name)
+  "<NAME>'s value from the finished app's outputs, or nil: <blog-url>,
+<fis-template-id>, and <REGION-endpoint> (that Region's cluster endpoint)."
+  (let ((o (dat401--outputs)))
+    (cond
+     ((null o) nil)
+     ((equal name "blog-url") (alist-get 'webUrl o))
+     ((equal name "fis-template-id") (alist-get 'templateId (alist-get 'fis o)))
+     ((string-match "\\`\\([a-z][a-z]-[a-z]+-[0-9]\\)-endpoint\\'" name)
+      (let ((region (match-string 1 name)))
+        (alist-get 'clusterEndpoint
+                   (cl-find-if (lambda (r) (equal (alist-get 'region r) region))
+                               (alist-get 'regions o))))))))
+
 (defconst dat401--scraped
-  '(("kinesis-stream-arn" . "\"StreamARN\": \"\\([^\"\n]+\\)\"")
+  '(("fis-experiment-id" . "\\b\\(EXP[A-Za-z0-9]\\{8,\\}\\)\\b")
+    ("kinesis-stream-arn" . "\"StreamARN\": \"\\([^\"\n]+\\)\"")
     ("cdc-role-arn" . "\"\\(arn:aws:iam::[0-9]+:role/[^\"\n]+\\)\"")
     ("cdc-stream-id" . "\"streamIdentifier\": \"\\([a-z0-9]\\{26\\}\\)\""))
   "Placeholders read from the latest output in the pane being typed into.")
@@ -457,6 +515,7 @@ first, then the agent, quietly."
                  dat401--vars)))
    ((equal name "cluster-id")
     (car (split-string (dat401--value "cluster-endpoint" pane) "\\.")))
+   ((dat401--output-value name))
    (t
     (or (gethash name dat401--vars)
         (puthash name (string-trim (read-string (format "%s: " name))) dat401--vars)))))
@@ -743,8 +802,12 @@ with no entry is copied from wherever it last appears.")
 (defvar dat401--recalls (cons 0 0) "(FOUND . TYPED-INSTEAD) Ctrl-R re-runs (for tests).")
 
 (defun dat401--id-like-p (value)
-  "Is VALUE something nobody types by hand (a job id, a cluster id)?"
-  (string-match-p "\\`[a-z0-9]\\{20,\\}\\'" value))
+  "Is VALUE something nobody types by hand: a job or cluster id, an FIS
+template or experiment id, a URL?"
+  (let ((case-fold-search nil))
+    (or (string-match-p "\\`[a-z0-9]\\{20,\\}\\'" value)
+        (string-match-p "\\`EX[PT][A-Za-z0-9]\\{8,\\}\\'" value)
+        (string-match-p "\\`https?://" value))))
 
 (defun dat401--wrap-tolerant (s)
   "A regexp for S that still matches where the terminal wrapped it."
@@ -772,16 +835,33 @@ line (after CONTEXT, if given), or nil."
         (when (< (match-beginning 0) to) (push (match-beginning 0) out)))
       (nreverse out))))
 
+(defun dat401--settle-buffer (buf secs)
+  "Wait until BUF has gone SECS without changing (at most 3 s): a pane that
+was just resized is still being rewrapped by its terminal."
+  (let ((tick (buffer-modified-tick buf))
+        (since (float-time))
+        (deadline (+ (float-time) 3)))
+    (while (and (< (- (float-time) since) secs) (< (float-time) deadline))
+      (accept-process-output nil 0.05)
+      (redisplay)
+      (let ((now (buffer-modified-tick buf)))
+        (unless (= now tick) (setq tick now since (float-time)))))))
+
 (defun dat401--copy-from-screen (pane value &optional context)
   "Act out copying VALUE from PANE's earlier output, the way you would in
 vterm's copy mode: up to its line (a couple of taps, then key repeat), along
 it a word at a time, set the mark, select it, a beat to check, copy, and back
 to the prompt. Nothing touches the clipboard: the caller pastes VALUE from a
-variable. Returns non-nil if VALUE was on screen to copy."
+variable. Returns non-nil if VALUE was on screen to copy.
+
+VALUE is found again once copy mode is on: a pane that was just narrowed
+(pane B opening beside A) is rewrapped by its terminal after the layout
+changes, and positions found before that select the wrong text."
   (let* ((buf (dat401--pane pane))
          (win (get-buffer-window buf))
          (found (and win (not dat401--hurry) (not dat401--fast)
-                     (dat401--find-on-screen buf value context)))
+                     (progn (dat401--settle-buffer buf 0.3)
+                            (dat401--find-on-screen buf value context))))
          (start (car found)))
     (when found
       (cl-incf dat401--copies)
@@ -789,6 +869,8 @@ variable. Returns non-nil if VALUE was on screen to copy."
         (with-current-buffer buf
           (dat401--sleep (dat401--pause 400 0.3))
           (dat401--term-copy-mode t)
+          (when-let* ((again (dat401--find-on-screen buf value context)))
+            (setq found again start (car again)))
           (unwind-protect
               (let ((target (line-number-at-pos start)) (taps 0))
                 (dat401--sleep (dat401--pause 250 0.3))
@@ -1020,7 +1102,7 @@ got all the way."
                              (setq demo-it--step (1- n) ok nil)
                              (throw 'stop nil)))
                     ;; Each pane done (the loader, index jobs) before the next step.
-                    (dolist (p '(a b shell))
+                    (dolist (p (append '(a b shell) dat401-regions))
                       (when (get-buffer (dat401--buffer-name p))
                         (dat401--wait-settled p 300)))
                     (setq demo-it--step n))))
@@ -1068,12 +1150,12 @@ placeholder values like the cluster endpoint. The next `dat401-start' starts
 clean."
   (interactive)
   (ignore-errors (dat401-stop))
-  (dolist (name (mapcar (lambda (p) (dat401--buffer-name (car p))) dat401--pane-titles))
-    (dat401--kill-terminal (get-buffer name)))
+  (dolist (pane (append (mapcar #'car dat401--pane-titles) dat401-regions))
+    (dat401--kill-terminal (get-buffer (dat401--buffer-name pane))))
   (mapc (lambda (b) (when (buffer-live-p b) (kill-buffer b))) dat401--views)
   (clrhash dat401--vars)
   (setq dat401--views nil dat401--marks nil dat401--layout nil dat401--section ""
-        dat401--stale-endpoints nil)
+        dat401--stale-endpoints nil dat401--before-agent nil)
   (message "DAT401: reset. M-x dat401-start to begin again"))
 
 (provide 'dat401-stage)

@@ -14,6 +14,7 @@ use tokio::time::MissedTickBehavior;
 
 use crate::api;
 use crate::control::{Controller, Pacer};
+use crate::failover::Failover;
 use crate::mix::{Available, Mix, Op, PPM, fallback};
 use crate::pool::IdPool;
 use crate::stats::{Class, Stats, classify_status};
@@ -39,7 +40,11 @@ pub fn sha256_hex(body: &[u8]) -> String {
     out
 }
 
-fn json_post<U: reqwest::IntoUrl>(client: &reqwest::Client, url: U, body: String) -> reqwest::RequestBuilder {
+fn json_post<U: reqwest::IntoUrl>(
+    client: &reqwest::Client,
+    url: U,
+    body: String,
+) -> reqwest::RequestBuilder {
     let hash = sha256_hex(body.as_bytes());
     client
         .post(url)
@@ -220,6 +225,8 @@ pub struct Ctx {
     pub start: Instant,
     pub stop: AtomicBool,
     pub events: EventLog,
+    /// Open loop: moves a failing Region's traffic to the healthy ones.
+    pub failover: Failover,
 }
 
 impl Ctx {
@@ -239,6 +246,26 @@ impl Ctx {
         self.controllers[t]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Each Region's own rate: req/s (open loop) or active workers (closed loop).
+    pub fn own_rates(&self, secs: f64) -> Vec<f64> {
+        (0..self.targets.len())
+            .map(|t| match self.mode {
+                Mode::Rate => self.controller(t).rate(secs),
+                Mode::Concurrency => self.active[t].0.load(Relaxed) as f64,
+            })
+            .collect()
+    }
+
+    /// What each Region is actually being sent after failover reroutes some
+    /// of a failing Region's traffic to the healthy ones.
+    pub fn effective_rates(&self, secs: f64) -> Vec<f64> {
+        let own = self.own_rates(secs);
+        match self.mode {
+            Mode::Rate => self.failover.effective(&own),
+            Mode::Concurrency => own,
+        }
     }
 }
 
@@ -290,7 +317,10 @@ fn build(ctx: &Ctx, target: &Target, op: Op) -> (Op, RequestBuilder) {
         (Op::CreateComment, Some(id)) => {
             let mut body = String::with_capacity(192);
             text::comment_json(&mut body, user);
-            (op, json_post(client, post_url(&target.base, id, "/comments"), body))
+            (
+                op,
+                json_post(client, post_url(&target.base, id, "/comments"), body),
+            )
         }
         (Op::CreatePost, _) => {
             let category = if ctx.categories.is_empty() {
@@ -347,13 +377,14 @@ pub async fn run_one(ctx: &Ctx, t: usize, op: Op) -> Class {
     class
 }
 
-/// Open loop: send at the controller's rate, whatever the latency.
+/// Open loop: send at the controller's rate, whatever the latency. While
+/// Region `t` is failing, failover sends most of its requests to a healthy
+/// Region instead (that Region's URL, in-flight cap and stats).
 pub async fn pacer(ctx: Arc<Ctx>, t: usize) {
     let mut tick = tokio::time::interval(Duration::from_millis(1));
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut pacer = Pacer::default();
     let mut last = Instant::now();
-    let target = &ctx.targets[t];
     while !ctx.stopping() {
         tick.tick().await;
         let now = Instant::now();
@@ -361,22 +392,20 @@ pub async fn pacer(ctx: Arc<Ctx>, t: usize) {
         last = now;
         let rate = ctx.controller(t).rate(ctx.secs(now) - dt / 2.0);
         let n = pacer.advance(rate, dt);
-        let mut skipped = 0;
         for _ in 0..n {
+            let to = ctx.failover.route(t);
+            let target = &ctx.targets[to];
             if target.in_flight() >= target.cap {
-                skipped += 1;
+                target.skipped.fetch_add(1, Relaxed);
                 continue;
             }
             target.in_flight.0.fetch_add(1, Relaxed);
             let op = ctx.mix.pick(fastrand::u32(..PPM));
             let ctx = ctx.clone();
             tokio::spawn(async move {
-                run_one(&ctx, t, op).await;
-                ctx.targets[t].in_flight.0.fetch_sub(1, Relaxed);
+                run_one(&ctx, to, op).await;
+                ctx.targets[to].in_flight.0.fetch_sub(1, Relaxed);
             });
-        }
-        if skipped > 0 {
-            target.skipped.fetch_add(skipped, Relaxed);
         }
     }
 }

@@ -6,10 +6,11 @@
 #   ./preflight.sh --smoke         # ...and run a 15 s load test from the host
 #
 # Every line is ok / WARN / FAIL with what to do about it. Exits 1 if anything
-# failed. Read-only apart from --start-host and --smoke, and the warm-up reads.
+# failed. Read-only apart from --start-host and --smoke, the warm-up reads, and
+# taking the finale's live edit (" (live from re:Invent)") back off a post title.
 #
-# Environment: CDC_STREAM (dat401-cdc: step 10's Kinesis stream, set up by hand),
-#   LAMBDA_CONCURRENCY (10000)
+# Environment: CDC_STREAM (dat401-cdc: step 9 creates this Kinesis stream on
+#   stage, so it mustn't exist yet), LAMBDA_CONCURRENCY (10000)
 set -uo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -236,18 +237,60 @@ PY
 done
 
 # ---------------------------------------------------------------------------
-section "Live demo (step 10)"
+section "Live demo (step 9)"
 
+# Step 9 creates the Kinesis stream on stage, and create-stream fails if one
+# by that name is left over from a rehearsal.
 kin="$(aws kinesis describe-stream-summary --region "$REGION_A" --stream-name "$CDC_STREAM" \
-  --query 'StreamDescriptionSummary.[StreamStatus,StreamModeDetails.StreamMode,MaxRecordSizeInKiB]' --output text 2>/dev/null)"
-if [[ "$kin" == "ACTIVE"*"ON_DEMAND"*"10240" ]]; then
-  ok "Kinesis stream $CDC_STREAM: ACTIVE, ON_DEMAND, 10 MiB records"
-elif [[ -n "$kin" ]]; then
-  warn "Kinesis stream $CDC_STREAM: $kin (CDC wants ON_DEMAND and MaxRecordSizeInKiB 10240)"
+  --query 'StreamDescriptionSummary.StreamStatus' --output text 2>/dev/null)"
+if [[ -z "$kin" ]]; then
+  ok "no Kinesis stream $CDC_STREAM yet (step 9 creates it)"
 else
-  others="$(aws kinesis list-streams --region "$REGION_A" --query 'StreamNames' --output text 2>/dev/null | tr '\t' ' ')"
-  warn "no Kinesis stream $CDC_STREAM in $REGION_A for step 10 (CDC_STREAM=<name> ./preflight.sh; streams here: ${others:-none})"
+  fail "Kinesis stream $CDC_STREAM already exists ($kin): step 9's create-stream would fail. aws kinesis delete-stream --region $REGION_A --stream-name $CDC_STREAM"
 fi
+if aws iam get-role --role-name dat401-cdc >/dev/null 2>&1; then
+  ok "IAM role dat401-cdc (step 9's CDC role)"
+else
+  fail "no IAM role dat401-cdc: run stage/setup-cdc-role.sh"
+fi
+
+# ---------------------------------------------------------------------------
+section "Two Regions (the finale)"
+
+FIS_REGION="$(j '.fis.region // empty')"
+FIS_TEMPLATE="$(j '.fis.templateId // empty')"
+if [[ -z "$FIS_TEMPLATE" ]]; then
+  fail "no FIS template in outputs.json: re-run deploy.sh"
+else
+  want="$(j ".regions[] | select(.region == \"$FIS_REGION\") | .clusterArn")"
+  got="$(aws fis get-experiment-template --region "$FIS_REGION" --id "$FIS_TEMPLATE" \
+    --query 'experimentTemplate.targets.cluster.resourceArns[0]' --output text 2>&1)"
+  if [[ "$got" == "$want" ]]; then
+    ok "FIS template $FIS_TEMPLATE fails $FIS_REGION's cluster"
+  else
+    fail "FIS template $FIS_TEMPLATE ($FIS_REGION): ${got:0:200} (re-run deploy.sh)"
+  fi
+  running="$(aws fis list-experiments --region "$FIS_REGION" --output text \
+    --query "experiments[?experimentTemplateId=='$FIS_TEMPLATE' && (state.status=='running' || state.status=='initiating')].id" 2>/dev/null)"
+  if [[ -z "$running" || "$running" == "None" ]]; then
+    ok "no FIS experiment running"
+  else
+    fail "FIS experiment $running is running: $FIS_REGION refuses DB connections. aws fis stop-experiment --region $FIS_REGION --id $running"
+  fi
+fi
+
+# The finale changes the newest post's title in psql; put it back so every
+# run starts from the same page.
+EDIT=" (live from re:Invent)"
+ep="$(j '.regions[0].clusterEndpoint')"
+token="$(aws dsql generate-db-connect-admin-auth-token --region "$REGION_A" --hostname "$ep" --expires-in 300 2>/dev/null)"
+fixed="$(PGHOST="$ep" PGUSER=admin PGDATABASE=postgres PGSSLMODE=require PGPASSWORD="$token" PGCONNECT_TIMEOUT=10 \
+  psql -X -At -c "update posts set title = replace(title, '$EDIT', '') where title like '%$EDIT'" 2>&1)"
+case "$fixed" in
+  "UPDATE 0") ok "post titles are as seeded" ;;
+  UPDATE*) ok "took the live edit back off ${fixed#UPDATE } post title(s)" ;;
+  *) fail "couldn't check post titles in $REGION_A: ${fixed:0:200}" ;;
+esac
 
 # ---------------------------------------------------------------------------
 if ((SMOKE && FAILS == 0)); then

@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -128,6 +128,11 @@ pub struct MockState {
     cfg: MockConfig,
     shared: Arc<Shared>,
     pub counters: Counters,
+    /// While set, every route answers 503, like the real API when its
+    /// Region's DSQL endpoint refuses connections (an FIS experiment).
+    pub failing: AtomicBool,
+    /// 503s answered while failing.
+    pub failed: AtomicU64,
 }
 
 pub struct MockServer {
@@ -338,6 +343,8 @@ pub async fn start(
         cfg,
         shared,
         counters: Counters::default(),
+        failing: AtomicBool::new(false),
+        failed: AtomicU64::new(0),
     });
     let app = Router::new()
         .route("/health", get(health))
@@ -386,7 +393,17 @@ async fn gate(State(state): State<Arc<MockState>>, req: Request, next: Next) -> 
         return r;
     }
     c.max_in_flight.fetch_max(n, Relaxed);
-    let mut resp = next.run(req).await;
+    let mut resp = if state.failing.load(Relaxed) {
+        state.failed.fetch_add(1, Relaxed);
+        error(
+            &state,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database unavailable: unable to accept connection",
+            0.0,
+        )
+    } else {
+        next.run(req).await
+    };
     if let Ok(v) = HeaderValue::from_str(&state.cfg.region) {
         resp.headers_mut().insert("x-region", v);
     }

@@ -8,7 +8,7 @@ The full talk, written out. It's two things at once:
 
 The talk builds a blog (users, posts, comments) on Aurora DSQL in 30 minutes,
 then shows a polished version of it running serverless in two Regions at
-20,000 requests per second. Most of what we type is ordinary PostgreSQL, on
+20,000 requests per second, and takes one Region away. Most of what we type is ordinary PostgreSQL, on
 purpose. The interesting parts are the places where DSQL behaves differently,
 and they're called out as you go:
 
@@ -46,7 +46,8 @@ Timing, staging, and what to do if something goes wrong.
    about 190 DPU to 0.04.
 5. **Multi-Region is active-active with strong consistency.** Both Regions
    read and write. A write in one is visible on the very next read in the
-   other. There's no replication lag to design around and no failover to run.
+   other. There's no replication lag to design around and no failover to run:
+   take a Region away and the other carries on.
 6. **Serverless end to end scales without intervention.** Lambda in front
    of DSQL went from idle to 20,000 requests per second, with no
    provisioning, pool tuning or capacity plan.
@@ -58,9 +59,8 @@ Timing, staging, and what to do if something goes wrong.
 | Time | Part |
 |---|---|
 | 0:00–5:00 | Intro: what DSQL is, the agenda |
-| 5:00–35:00 | Build it: steps 1–10 (console, psql) |
-| 35:00–40:00 | The polished app, in two Regions |
-| 40:00–44:00 | Scale: 20,000 requests per second |
+| 5:00–32:00 | Build it: steps 1–9 (console, psql) |
+| 32:00–44:00 | Two Regions: the finished app, 20,000 requests per second, and losing a Region |
 | 44:00–45:00 | Wrap-up |
 
 ## Following along
@@ -73,7 +73,7 @@ You need:
 - **Optional: Node.js**, to run the API yourself (`demo/api`).
 - **Optional: Rust** (`cargo`), to build the CDC viewer in `events/`.
 
-Cost: steps 1–10 cost cents. The polished app (`demo/`) runs CloudFront,
+Cost: steps 1–9 cost cents. The polished app (`demo/`) runs CloudFront,
 Lambda, two clusters and an EC2 host. Tear it down with `demo/destroy.sh`
 when you're done. [Cleaning up](#cleaning-up) covers everything.
 
@@ -100,7 +100,8 @@ This year we skip all that. We'll build a blog: a small schema, some queries,
 an API, and a web page. While we do, I'll show you the
 handful of places where a distributed database behaves differently from the
 PostgreSQL on your laptop, and why those differences are good news. Then we'll
-see the finished app in two Regions, and throw 20,000 requests a second at it.
+see the finished app in two Regions, throw 20,000 requests a second at it,
+and take a Region away while it runs.
 
 <details>
 <summary>Presenter notes</summary>
@@ -116,7 +117,7 @@ see the finished app in two Regions, and throw 20,000 requests a second at it.
 
 ---
 
-## 5:00–35:00 · Build it
+## 5:00–32:00 · Build it
 
 ### Step 1 · Two clusters, a connection, a schema · 5:00–9:00
 
@@ -850,131 +851,151 @@ Region. More in
   insert has to come after it, or the change isn't captured.
 </details>
 
-### Step 10 · Multi-Region · 32:00–35:00
+---
 
-Last console stop: **Create cluster → Multi-Region**. You choose the two Regions
-that take reads and writes, us-west-2 and us-east-1, and a **witness** Region,
-us-east-2. The witness stores a limited window of encrypted transaction logs,
-which improves the cluster's durability and availability if a Region has a
-problem. It has no endpoint.
+## 32:00–44:00 · Two Regions
 
-I'm not going to click Create. That cluster already exists, and the finished
-blog runs on it.
+Everything so far has run in one Region. The finished blog runs in two, on one
+database, and keeps going when one of them goes away.
+
+### Multi-Region, in a minute · 32:00–33:00
+
+Back to the console:
+
+```sh
+open https://console.aws.amazon.com/dsql/home?region=us-west-2
+```
+
+**Create cluster → Multi-Region.** It's the same page as before, with two more
+choices:
+- the second Region that takes reads and writes: us-east-1;
+- a **witness** Region: us-east-2. It stores a limited window of encrypted
+  transaction logs, which keeps the cluster durable and available if a Region
+  has a problem. It has no endpoint.
+
+Create. That's two endpoints, one per Region, onto one database. I made one
+earlier, with the same schema we built today, and put the blog on it.
 
 > **★ DSQL difference: active-active, strongly consistent.** There are two
 > endpoints, both read-write, onto one logical database. A commit waits for
 > the other Region, so writes pay a cross-Region round trip. Reads stay local,
 > and every read sees every committed write, wherever it was made.
 
----
+<details>
+<summary>Presenter notes</summary>
 
-## 35:00–40:00 · The polished app
+- F12 types the `open` in the shell, and the browser comes forward on a new
+  tab. ⌘-Tab back to Emacs for the next F12.
+- Create really makes two clusters, one in each Region. Delete them afterwards
+  (see [Cleaning up](#cleaning-up)), or stop before Create: the point is the
+  choices on the page.
+</details>
 
-### The API, from one prompt · 35:00–36:00
+### The API, from one prompt · 33:00–34:00
 
-First, the API it runs on. With a schema in place, the application is the easy part. I'll ask Claude Code
-for it. It has the Aurora DSQL skill installed, which is the only DSQL-specific
-setup here:
+I asked Claude Code for the API:
 
 ```prompt
-in ./blog build a typescript api for my blog on aurora dsql w/ drizzle orm. cluster endpoint is in $PGHOST, connect as admin. tables already exist so just read teh schema from the db. ops: list posts (newest first w/ author), get post (with its comments + each comenters username), create post, add comment. give me an http server and a small cli that calls it over http. then start the server and use the cli to chcek every op works
+the blog schema is already in the dsql cluster at $PGHOST, read it from teh db. build a typescript crud api for it w/ hono + drizzle orm, using the aurora dsql drizzle adapter. ops: list posts newest first w/ author, get a post w/ its comments + each commenters username, create post, add comment. retry writes on occ conflicts. deploy it to lambda in us-west-2 and us-east-1, one function per region talking to its own regions endpoint, then call every op in both regions to check it works
 ```
 
-*(Typed the way people actually prompt, typos included. The agent doesn't mind.)*
+*(Typed the way people actually prompt, typos included.)*
 
-I'm not going to submit that. I did it earlier, so you don't have to wait for
-it. There's nothing DSQL-specific in the prompt beyond the word "DSQL": the
-skill supplies the rest. Here's the code it led to, as it runs in the finished
-app. First, the connection:
-
-```ts demo/api/src/db.ts
-import { drizzle } from "@aws/aurora-dsql-drizzle";
-import { AuroraDSQLPool } from "@aws/aurora-dsql-node-postgres-connector";
-...
-export function createDb({ host, user, max }: DbOptions) {
-  const pool = new AuroraDSQLPool({
-    host,
-    user,
-    max,
-    // DSQL closes connections after 60 minutes. Recycle well before that.
-    maxLifetimeSeconds: 50 * 60,
-...
-  return drizzle({ client: pool, schema });
-}
-```
-
-That's the
-[DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
-`@aws/aurora-dsql-drizzle`, on the DSQL connector for node-postgres. The
-connector makes a fresh IAM token for each new connection, so there's no
-password anywhere: not in the code, not in an environment variable.
-
-Then every write:
-
-```ts demo/api/src/queries.ts
-export async function addComment(
-...
-  return db.transactionWithRetry(
-    async (tx) => {
-      const [post] = await tx.select({ id: posts.id }).from(posts).where(eq(posts.id, postId));
-      if (!post) throw new HttpError(404, "post not found");
-...
-      const [row] = await tx
-        .insert(comments)
-        .values({ postId, userId: user.id, body: input.body })
-...
-    },
-    undefined,
-    WRITE_RETRY,
-  );
-}
-```
-
-`db.transactionWithRetry(...)` runs the whole transaction again if it loses a
-conflict. That's the race from step 6, handled for you.
-
-> Following along: [`demo/api`](demo/api) is this API, written for the same
-> schema. To run it against your cluster:
-> ```sh
-> cd demo && npm install
-> CLUSTER_ENDPOINT=$PGHOST DB_USER=admin npm run dev:api     # http://localhost:3000
-> ```
+I'm not going to submit that: it ran earlier. It read the schema from the
+database, wrote the API, and deployed it as one Lambda function per Region,
+each connecting to its own Region's endpoint. Nothing in the prompt is
+DSQL-specific beyond the word "dsql". The Aurora DSQL skill supplies the rest:
+IAM tokens instead of passwords, and retrying a transaction that loses a
+conflict, as in step 6.
 
 <details>
 <summary>Presenter notes</summary>
 
-- F12 opens a terminal beside psql, starts Claude Code, and types the prompt.
-  The next F12 closes it. Then `db.ts`, then `queries.ts`: the real files, with
-  the lines above highlighted.
-- The prompt is never submitted: demo-it sends no Enter and no newline (the
-  paragraphs are typed as one). **Don't press Enter while Claude Code is on
-  screen**: it's in auto mode, so it would start building.
-- Kiro built the first version in rehearsal. In the first dry run Kiro took about 11
-  minutes. Its first version used plain `drizzle-orm` with the connector and
-  needed a nudge toward `@aws/aurora-dsql-drizzle`, and its CLI called the
-  database directly (hence "calls it over HTTP" in the prompt).
+- F12 opens Claude Code full screen with the whole prompt already in it.
+  Nothing is typed and nothing is submitted. **Don't press Enter while it's
+  on screen**: it's in auto mode. The next F12 closes it.
+- The deployed API is [`demo/api`](demo/api): Hono and the
+  [DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
+  behind a Lambda function URL in each Region.
 </details>
 
-### The app, in two Regions · 36:00–40:00
+### One database, two Regions · 34:00–36:00
 
-The same blog, finished ([`demo/`](demo)):
-- a React page on S3 and CloudFront;
-- a Lambda function in each Region, running the same Hono + Drizzle code we
-  ran locally;
-- one multi-Region DSQL cluster, peered between us-west-2 and us-east-1, with
-  the same schema choices as the live build: UUID keys, comments keyed by
-  `(post_id, comment_id)`, and covering indexes for the home and category pages.
+One terminal in each Region:
 
-<!-- beat -->
+```sh pane us-west-2 paste
+export PGHOST=<us-west-2-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --region us-west-2 --hostname $PGHOST --expires-in 3600)"
+psql
+```
 
-The page has one column per Region:
+```sh pane us-east-1 paste
+export PGHOST=<us-east-1-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --region us-east-1 --hostname $PGHOST --expires-in 3600)"
+psql
+```
+
+The same data on both sides:
+
+```sql both regions
+SELECT count(*) FROM posts;
+SELECT title FROM posts ORDER BY created_at DESC LIMIT 1;
+```
+
+Change something in us-west-2:
+
+```sql pane us-west-2
+UPDATE posts SET title = title || ' (live from re:Invent)'
+WHERE id = (SELECT id FROM posts ORDER BY created_at DESC LIMIT 1);
+```
+
+And read it in us-east-1:
+
+```sql pane us-east-1 recall: desc limit 1
+SELECT title FROM posts ORDER BY created_at DESC LIMIT 1;
+```
+
+It's there on the very next read. The commit in us-west-2 waited for
+us-east-1, so there's no replication lag to wait out.
+
+> **★ DSQL difference: no replication lag to code around.** The
+> "read-your-writes in another Region" problem doesn't exist. There's no
+> primary to fail over to, and no stale replica to route around.
+
+<details>
+<summary>Presenter notes</summary>
+
+- The endpoints come from `demo/outputs.json`. Each pane pastes its exports
+  and starts psql in one go.
+- `demo/preflight.sh` takes the ` (live from re:Invent)` back off the title,
+  so every rehearsal starts from the same page.
+</details>
+
+### The site, from another prompt · 36:00–38:30
+
+Then the web app:
+
+```prompt
+now a web app for the blog api: react + vite, deployed on s3 + cloudfront. show one region by default (a ?region= param picks), with a toggle to show both regions side by side so i can open a post in one and watch a comment i write there show up in teh other. show the round trip and the db time for every request
+```
+
+```sh
+open <blog-url>
+```
+
+This is what a reader near us-west-2 sees: the blog, from the us-west-2 API.
+The first post's title is the one we just changed in psql. In production you'd
+send each reader to their nearest Region, for example with Route 53 latency
+routing. Here a `?region=` parameter picks, and **Show both Regions** puts the
+two side by side. That's for the demo, not for readers.
+
 - **Round trip:** browser to that Region and back. From Las Vegas, us-west-2
   is closer.
 - **In Aurora DSQL:** database time only, about the same in both Regions,
   because each reads from its local endpoint.
 
-Open a post; with "Keep both columns on the same page" on, both columns follow.
-Write a comment in the us-west-2 column, and watch us-east-1:
+Open a post; both columns follow. Write a comment in the us-west-2 column, and
+watch us-east-1:
 
 ```
 Posted in us-west-2, read here N ms after it was saved.
@@ -985,36 +1006,38 @@ waiting out. In our measurements, a write spent about **80–190 ms** in the
 database (the commit crosses the country) and a read about **11–14 ms**. For a
 blog that's 90% reads, that's the right trade-off.
 
-> **★ DSQL difference: no replication lag to code around.** The
-> "read-your-writes in another Region" problem doesn't exist. There's no
-> primary to fail over to, and no stale replica to route around.
-
 <details>
 <summary>Presenter notes</summary>
 
+- F12 closes the prompt and types the `open` in the shell below the two psql
+  panes. The browser comes forward on the site. ⌘-Tab back to Emacs for the
+  load test.
 - `demo/preflight.sh` ~30 minutes before warms both APIs, so the first click
   isn't a cold start. It ends by printing the site and dashboard URLs. They're
   in `demo/outputs.json`, which isn't committed: this repo is public, and the
   site's API takes load from anyone who has the address.
-- One sentence on the architecture: one CloudFront distribution serves the page
-  from S3 and routes `/api/<region>/*` to an IAM-authenticated Lambda function URL
-  in each Region (only the distribution can call them).
+- One sentence on the architecture, if asked: one CloudFront distribution
+  serves the page from S3 and routes `/api/<region>/*` to an IAM-authenticated
+  Lambda function URL in each Region (only the distribution can call them).
 </details>
 
 <details>
 <summary>Following along: deploy it yourself</summary>
 
 `cd demo && ./deploy.sh` (about 10 minutes the first time; it's idempotent), then
-`./preflight.sh`. Details in [`demo/README.md`](demo/README.md).
+`./preflight.sh`. Details in [`demo/README.md`](demo/README.md). To run the API
+locally against your own cluster instead:
+
+```sh
+cd demo && npm install
+CLUSTER_ENDPOINT=$PGHOST DB_USER=admin npm run dev:api     # http://localhost:3000
+```
 </details>
 
----
-
-## 40:00–44:00 · Scale
+### 20,000 requests a second · 38:30–40:30
 
 Everything so far has been one person clicking. Here's 20,000 requests a
-second. The load generator runs on an EC2 host in us-west-2, and its display
-shows here:
+second, from a load generator on an EC2 host in us-west-2:
 
 ```sh
 cd demo/loadgen
@@ -1024,7 +1047,11 @@ cd demo/loadgen
 The traffic is 90% reads and 10% writes (new comments), split across both
 Regions. It ramps over 60 seconds, because every new Lambda execution
 environment opens one DSQL connection, and a cluster accepts 100 new
-connections a second.
+connections a second. Nobody provisioned anything for this:
+- no instance sizes;
+- no read replicas;
+- no connection pool tuning;
+- no capacity plan.
 
 From our rehearsal:
 
@@ -1036,17 +1063,6 @@ us-east-1    498,281    497,866    5,998    10,366     107     174     324      
 all        1,028,312  1,027,897   12,384    20,368      95     128     283       17      92
 ```
 
-On the dashboard (CloudWatch, a minute behind), watch Lambda invocations and
-concurrent environments climb in both Regions, and DSQL transactions and DPUs
-follow. Nobody provisioned anything for this:
-- no instance sizes;
-- no read replicas;
-- no connection pool tuning;
-- no capacity plan.
-
-It's the same code that ran on my laptop an hour ago. Then stop the load, and
-watch both graphs fall to zero.
-
 > **★ DSQL difference: serverless end to end.** Lambda adds environments,
 > DSQL adds capacity, and both bill for work done. The database p50 stayed
 > about 14–18 ms from the first request to the millionth.
@@ -1054,14 +1070,68 @@ watch both graphs fall to zero.
 <details>
 <summary>Presenter notes</summary>
 
+- Point at **DB p50**: about 15 ms in both Regions, the whole way up.
+- Leave it running: the next step takes a Region away under this load.
 - Lambda caps synchronous requests at 10 × the Region's concurrency quota per
-  second. At the default 1,000 that's 10,000 req/s, which is why us-east-1 shows
-  415 throttles (429s) in the run above. [`demo/quotas.sh`](demo/quotas.sh)
-  raises both Regions to 10,000.
+  second. [`demo/quotas.sh`](demo/quotas.sh) raises both Regions to 10,000.
+  With all 20,000 a second on one Region (next step), that Region needs it.
 - The host is patched by the account's weekly SSM job (Tuesdays about
   2:46 PM PST). Leave it running from Tuesday, or start it at least an hour
   before the talk. `preflight.sh` checks its uptime and the next patch time.
 - `loadgen --stop-ec2` afterwards.
+</details>
+
+### Losing a Region · 40:30–43:00
+
+While that runs, let's take us-east-1 away. AWS Fault Injection Service (FIS)
+has an action for Aurora DSQL that makes a Region's endpoint refuse new
+connections and drop the open ones. I've set up an experiment for us-east-1's
+half of the cluster:
+
+```sh
+aws fis start-experiment --region us-east-1 --experiment-template-id <fis-template-id> --query experiment.id --output text
+```
+
+About 20 seconds later, every us-east-1 Lambda loses its database connection
+and can't get another, so that Region's API answers 503. In the Regions table,
+us-east-1's requests fail, the load generator sends its share to us-west-2,
+and the total stays at 20,000 a second.
+
+<!-- stage: cue browser -->
+
+On the site, the us-west-2 column carries on. The us-east-1 column shows a
+spinner while it retries.
+
+Put us-east-1 back:
+
+```sh
+aws fis stop-experiment --region us-east-1 --id <fis-experiment-id> --query experiment.state.status --output text
+```
+
+<!-- stage: cue browser -->
+
+New connections work at once. The spinner clears, and the load generator moves
+us-east-1's traffic back over about ten seconds.
+
+> **★ DSQL difference: losing a Region is a routing problem, not a database
+> one.** Both endpoints were read-write all along, so there's nothing to
+> promote and no failover to run. Moving traffic is the client's job (here,
+> the load generator; in production, Route 53 health checks or your own
+> client).
+
+<details>
+<summary>Presenter notes</summary>
+
+- The bottom 20% of the screen is a shell under the load generator. F12 types
+  `start-experiment` there. The experiment id it prints is copied into
+  `stop-experiment`.
+- Talk over the 20 seconds before it bites: what FIS is, what the action does.
+- After each FIS command, Emacs shows "→ browser": ⌘-Tab to the site, then back
+  to Emacs for the next F12.
+- The template is the `Dat401-Fis-us-east-1` stack (`demo/deploy.sh` makes it).
+  It runs at most 10 minutes even if nobody stops it.
+- **Following along:** the template id is `fis.templateId` in
+  `demo/outputs.json`.
 </details>
 
 ---
@@ -1087,6 +1157,7 @@ What we did in 45 minutes, and what DSQL did differently:
 | Streamed changes | Built-in CDC to Kinesis |
 | Wrote in one Region | Read it in the other, immediately |
 | Hit it with 20k req/s | Nobody provisioned anything |
+| Took a Region away | The other kept reading and writing; no failover |
 
 Links:
 - **Aurora DSQL:** [docs](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/),
@@ -1102,7 +1173,8 @@ Links:
 ## Cleaning up
 
 ```sh
-# Steps 1-10: your clusters (turn off deletion protection first if it's on)
+# Steps 1-9: your clusters (turn off deletion protection first if it's on),
+# and the multi-Region pair from the console, if you clicked Create
 aws dsql update-cluster --identifier <id> --no-deletion-protection-enabled
 aws dsql delete-cluster --identifier <id>
 
@@ -1110,7 +1182,7 @@ aws dsql delete-cluster --identifier <id>
 aws dsql delete-stream --cluster-identifier <cluster-id> --stream-identifier <stream-id>
 aws kinesis delete-stream --stream-name dat401-cdc
 
-# The polished app, its clusters, and the EC2 host
+# The finished app: its clusters, the FIS template, and the EC2 host
 cd demo && ./destroy.sh
 ```
 

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::failover::State;
 use crate::runner::{Ctx, Mode};
 use crate::stats::{Class, Interval, NCLASS, pct_ms};
 use crate::util::{fmt_clock, fmt_ms, fmt_rate};
@@ -26,8 +27,10 @@ struct Bucket {
 #[serde(rename_all = "camelCase")]
 pub struct TimelineRegion {
     pub tps: f64,
-    /// Commanded rate (req/s) or active workers.
+    /// Commanded rate (req/s, after failover) or active workers.
     pub rate: f64,
+    /// Failover state: up, down or returning.
+    pub state: &'static str,
     pub in_flight: usize,
     pub p50_ms: Option<f64>,
     pub p99_ms: Option<f64>,
@@ -86,6 +89,10 @@ pub struct RegionRow {
     pub recent: [u64; NCLASS],
     pub backing_off: bool,
     pub skipped: u64,
+    /// Failover: its traffic has gone to the other Regions.
+    pub down: bool,
+    /// Failover: its traffic is moving back.
+    pub returning: bool,
 }
 
 pub struct View {
@@ -213,20 +220,15 @@ impl Monitor {
         all
     }
 
-    fn rate_now(ctx: &Ctx, t: usize, secs: f64) -> f64 {
-        match ctx.mode {
-            Mode::Rate => ctx.controller(t).rate(secs),
-            Mode::Concurrency => ctx.active[t].0.load(std::sync::atomic::Ordering::Relaxed) as f64,
-        }
-    }
-
     pub fn record_second(&mut self, ctx: &Ctx, secs: f64) {
+        let rates = ctx.effective_rates(secs);
         let regions = (0..self.win.len())
             .map(|t| {
                 let w = &self.win[t];
                 TimelineRegion {
                     tps: round1(self.tps(t)),
-                    rate: round1(Self::rate_now(ctx, t, secs)),
+                    rate: round1(rates[t]),
+                    state: state_name(ctx.failover.state(t)),
                     in_flight: ctx.targets[t].in_flight(),
                     p50_ms: pct_ms(&w.lat, 0.5),
                     p99_ms: pct_ms(&w.lat, 0.99),
@@ -245,11 +247,11 @@ impl Monitor {
 
     pub fn plain_line(&self, ctx: &Ctx, secs: f64) -> String {
         let mut target = 0.0;
-        let mut rate = 0.0;
         for t in 0..self.win.len() {
             target += ctx.controller(t).target();
-            rate += Self::rate_now(ctx, t, secs);
         }
+        let rates = ctx.effective_rates(secs);
+        let rate: f64 = rates.iter().sum();
         let unit = match ctx.mode {
             Mode::Rate => "/s",
             Mode::Concurrency => " workers",
@@ -264,8 +266,12 @@ impl Monitor {
         for (t, target) in ctx.targets.iter().enumerate() {
             let w = &self.win[t];
             let tot = &self.totals[t];
+            let state = match ctx.failover.state(t) {
+                State::Up => String::new(),
+                s => format!(" {}", state_name(s).to_uppercase()),
+            };
             line.push_str(&format!(
-                " | {} {}/s in-flight {} p50/p90/p99 {}/{}/{} ms",
+                " | {}{state} {}/s in-flight {} p50/p90/p99 {}/{}/{} ms",
                 target.label,
                 fmt_rate(self.tps(t)),
                 target.in_flight(),
@@ -292,18 +298,14 @@ impl Monitor {
         line
     }
 
-    fn row(&self, ctx: &Ctx, t: usize, secs: f64) -> RegionRow {
+    fn row(&self, ctx: &Ctx, t: usize, rate: f64) -> RegionRow {
         let w = &self.win[t];
         let c = ctx.controller(t);
+        let state = ctx.failover.state(t);
         RegionRow {
             label: ctx.targets[t].label.clone(),
             tps: self.tps(t),
-            rate: match ctx.mode {
-                Mode::Rate => c.rate(secs),
-                Mode::Concurrency => {
-                    ctx.active[t].0.load(std::sync::atomic::Ordering::Relaxed) as f64
-                }
-            },
+            rate,
             in_flight: ctx.targets[t].in_flight(),
             p50: pct_ms(&w.lat, 0.5),
             p90: pct_ms(&w.lat, 0.9),
@@ -316,13 +318,16 @@ impl Monitor {
             skipped: ctx.targets[t]
                 .skipped
                 .load(std::sync::atomic::Ordering::Relaxed),
+            down: state == State::Down,
+            returning: matches!(state, State::Returning { .. }),
         }
     }
 
     pub fn view(&self, ctx: &Ctx, info: &ViewInfo, now: Instant, stopping: Option<usize>) -> View {
         let secs = ctx.secs(now);
+        let rates = ctx.effective_rates(secs);
         let regions: Vec<RegionRow> = (0..self.win.len())
-            .map(|t| self.row(ctx, t, secs))
+            .map(|t| self.row(ctx, t, rates[t]))
             .collect();
         let mut errors = [0u64; NCLASS];
         let mut recent = [0u64; NCLASS];
@@ -353,6 +358,8 @@ impl Monitor {
             recent,
             backing_off: regions.iter().any(|r| r.backing_off),
             skipped: regions.iter().map(|r| r.skipped).sum(),
+            down: false,
+            returning: false,
         };
         let mut spark: Vec<u64> = vec![0; SPARK_POINTS - self.spark.len()];
         spark.extend(self.spark.iter().copied());
@@ -375,6 +382,14 @@ impl Monitor {
             posts: ctx.pool.post_count(),
             users: ctx.pool.user_count(),
         }
+    }
+}
+
+fn state_name(s: State) -> &'static str {
+    match s {
+        State::Up => "up",
+        State::Down => "down",
+        State::Returning { .. } => "returning",
     }
 }
 

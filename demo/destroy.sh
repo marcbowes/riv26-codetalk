@@ -20,6 +20,7 @@ STACK_API_B="Dat401-Api-$REGION_B"
 STACK_WEB="Dat401-Web"
 STACK_DASHBOARD="Dat401-Dashboard"
 STACK_LOADGEN="Dat401-Loadgen"
+STACK_FIS="Dat401-Fis-$REGION_B"
 
 export AWS_PAGER=""
 
@@ -106,7 +107,7 @@ delete_stacks() {
 }
 
 log "Stacks (reverse deploy order)"
-delete_stacks "$REGION_A:$STACK_LOADGEN" "$REGION_A:$STACK_DASHBOARD" "$REGION_A:$STACK_WEB"
+delete_stacks "$REGION_A:$STACK_LOADGEN" "$REGION_A:$STACK_DASHBOARD" "$REGION_A:$STACK_WEB" "$REGION_B:$STACK_FIS"
 delete_stacks "$REGION_A:$STACK_API_A" "$REGION_B:$STACK_API_B"
 # Together: a peered cluster sits in PENDING_DELETE until its peer is deleted too.
 delete_stacks "$REGION_A:$STACK_CLUSTER_A" "$REGION_B:$STACK_CLUSTER_B"

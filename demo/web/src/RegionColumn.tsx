@@ -1,5 +1,5 @@
 import type { Person } from "@dat401/api/types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Sample, createClient } from "./api";
 import type { View } from "./App";
 import { REGION_NAMES, type RegionConfig } from "./config";
@@ -8,6 +8,11 @@ import { PostList } from "./PostList";
 import { PostView } from "./PostView";
 
 const HISTORY = 24;
+/** How often a column checks its Region's /health, to notice it going down and coming back. */
+const HEALTH_MS = 2_000;
+
+/** A Region is down when it can't be reached (0) or answers 5xx. A 429 is throttling, not down. */
+export const isDown = (status: number) => status === 0 || status >= 500;
 
 export function RegionColumn({
   index,
@@ -21,10 +26,45 @@ export function RegionColumn({
   navigate: (v: View) => void;
 }) {
   const [samples, setSamples] = useState<Sample[]>([]);
+  // Down: the latest health check, or any request, failed (isDown). Only a
+  // health check that succeeds brings the column back, and then the body
+  // remounts (generation) so the list or post reloads straight away.
+  const [down, setDown] = useState(false);
+  const downRef = useRef(false);
+  const [generation, setGeneration] = useState(0);
+  const markDown = useCallback((status: number) => {
+    if (isDown(status) && !downRef.current) {
+      downRef.current = true;
+      setDown(true);
+    }
+  }, []);
   const client = useMemo(
-    () => createClient(config.apiUrl, (s) => setSamples((xs) => [...xs.slice(-(HISTORY - 1)), s])),
-    [config.apiUrl],
+    () => createClient(config.apiUrl, (s) => setSamples((xs) => [...xs.slice(-(HISTORY - 1)), s]), markDown),
+    [config.apiUrl, markDown],
   );
+
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        await client.health();
+        if (live && downRef.current) {
+          downRef.current = false;
+          setDown(false);
+          setGeneration((g) => g + 1);
+        }
+      } catch {
+        // markDown has seen the status: 0 or 5xx is down; anything else (a 429) isn't.
+      }
+      if (live) timer = setTimeout(check, HEALTH_MS);
+    };
+    void check();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [client]);
 
   const [users, setUsers] = useState<Person[] | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
@@ -66,26 +106,36 @@ export function RegionColumn({
         samples={samples}
         mismatch={config.region !== "local" && reported && reported !== config.region ? reported : undefined}
       />
-      <div className="column-body" ref={body}>
-        {view.kind === "list" ? (
-          <PostList
-            key={viewKey}
-            client={client}
-            category={view.category}
-            categories={categories}
-            navigate={navigate}
-          />
-        ) : (
-          <PostView
-            key={viewKey}
-            client={client}
-            id={view.id}
-            column={index}
-            region={region}
-            users={users}
-            navigate={navigate}
-          />
-        )}
+      <div className={down ? "column-main down" : "column-main"}>
+        <div className="column-body" ref={body} aria-busy={down}>
+          {view.kind === "list" ? (
+            <PostList
+              key={`${viewKey}:${generation}`}
+              client={client}
+              category={view.category}
+              categories={categories}
+              navigate={navigate}
+            />
+          ) : (
+            <PostView
+              key={`${viewKey}:${generation}`}
+              client={client}
+              id={view.id}
+              column={index}
+              region={region}
+              users={users}
+              navigate={navigate}
+            />
+          )}
+        </div>
+        {down ? (
+          <div className="down-overlay" role="status">
+            <div className="down-card">
+              <span className="spinner" aria-hidden="true" />
+              <p>Can't reach {region}. Retrying…</p>
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );

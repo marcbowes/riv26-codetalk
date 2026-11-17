@@ -37,6 +37,7 @@ STACK_API_B="Dat401-Api-$REGION_B"
 STACK_WEB="Dat401-Web"
 STACK_DASHBOARD="Dat401-Dashboard"
 STACK_LOADGEN="Dat401-Loadgen"
+STACK_FIS="Dat401-Fis-$REGION_B"
 
 export AWS_PAGER=""
 
@@ -48,7 +49,7 @@ die() {
 }
 
 # ---------------------------------------------------------------------------
-log "1/9 Checking prerequisites"
+log "1/10 Checking prerequisites"
 
 for cmd in node npm aws jq curl; do
   command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required but not on PATH"
@@ -112,7 +113,7 @@ wait_cluster_active() {
 }
 
 # ---------------------------------------------------------------------------
-log "2/9 Bootstrapping CDK in $REGION_A and $REGION_B"
+log "2/10 Bootstrapping CDK in $REGION_A and $REGION_B"
 
 if [[ "$SKIP_BOOTSTRAP" == "1" ]]; then
   info "skipped (SKIP_BOOTSTRAP=1)"
@@ -121,7 +122,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-log "3/9 Multi-Region Aurora DSQL clusters"
+log "3/10 Multi-Region Aurora DSQL clusters"
 
 ARN_A="$(stack_output "$REGION_A" "$STACK_CLUSTER_A" ClusterArn)"
 ARN_B="$(stack_output "$REGION_B" "$STACK_CLUSTER_B" ClusterArn)"
@@ -156,7 +157,7 @@ wait_cluster_active "$REGION_B" "$CLUSTER_ID_B"
 info "both clusters ACTIVE"
 
 # ---------------------------------------------------------------------------
-log "4/9 API (Lambda + IAM function URL) in both Regions"
+log "4/10 API (Lambda + IAM function URL) in both Regions"
 
 # Function URLs use AWS_IAM auth: only the Web stack's CloudFront distribution
 # may call them. On re-runs we already know its ARN; on the very first run the
@@ -174,7 +175,7 @@ FUNCTION_A="$(out "$OUT_DIR/api.json" "$STACK_API_A" FunctionName)"
 FUNCTION_B="$(out "$OUT_DIR/api.json" "$STACK_API_B" FunctionName)"
 
 # ---------------------------------------------------------------------------
-log "5/9 Database: schema, async indexes, blog_app role, IAM mappings, seed data"
+log "5/10 Database: schema, async indexes, blog_app role, IAM mappings, seed data"
 
 # One logical database across the peered clusters, so this runs once, in REGION_A.
 read -r -a setup_extra <<<"${SETUP_ARGS:-}"
@@ -184,7 +185,7 @@ read -r -a setup_extra <<<"${SETUP_ARGS:-}"
   ${setup_extra[@]+"${setup_extra[@]}"})
 
 # ---------------------------------------------------------------------------
-log "6/9 Web UI and API routes (S3 + CloudFront)"
+log "6/10 Web UI and API routes (S3 + CloudFront)"
 
 (cd "$DEMO_DIR" && npm run build -w @dat401/web --silent)
 deploy -c "clusterArns=$CLUSTER_ARNS" -c "functionUrls=$REGION_A=$FUNCTION_URL_A,$REGION_B=$FUNCTION_URL_B" \
@@ -201,13 +202,20 @@ if [[ "$NEW_DISTRIBUTION_ARN" != "$DISTRIBUTION_ARN" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-log "7/9 CloudWatch dashboard"
+log "7/10 CloudWatch dashboard"
 
 deploy -c "clusterArns=$CLUSTER_ARNS" --outputs-file "$OUT_DIR/dashboard.json" "$STACK_DASHBOARD"
 DASHBOARD_URL="$(out "$OUT_DIR/dashboard.json" "$STACK_DASHBOARD" DashboardUrl)"
 
 # ---------------------------------------------------------------------------
-log "8/9 Load generator host (EC2 in $REGION_A, reached via SSM)"
+log "8/10 FIS experiment: $REGION_B's DSQL endpoint refuses connections"
+
+deploy -c "clusterArns=$CLUSTER_ARNS" --outputs-file "$OUT_DIR/fis.json" "$STACK_FIS"
+FIS_TEMPLATE="$(out "$OUT_DIR/fis.json" "$STACK_FIS" TemplateId)"
+info "template $FIS_TEMPLATE (aws fis start-experiment --region $REGION_B --experiment-template-id $FIS_TEMPLATE)"
+
+# ---------------------------------------------------------------------------
+log "9/10 Load generator host (EC2 in $REGION_A, reached via SSM)"
 
 LOADGEN_INSTANCE=""
 if [[ "$LOADGEN_HOST" == "1" ]]; then
@@ -238,7 +246,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-log "9/9 Writing $OUTPUTS"
+log "10/10 Writing $OUTPUTS"
 
 jq -n \
   --arg witness "$WITNESS_REGION" \
@@ -246,7 +254,7 @@ jq -n \
   --arg epA "$ENDPOINT_A" --arg fnA "$FUNCTION_A" \
   --arg rB "$REGION_B" --arg urlB "$API_URL_B" --arg furlB "$FUNCTION_URL_B" --arg idB "$CLUSTER_ID_B" --arg arnB "$ARN_B" \
   --arg epB "$ENDPOINT_B" --arg fnB "$FUNCTION_B" \
-  --arg web "$WEB_URL" --arg dash "$DASHBOARD_URL" --arg lgi "$LOADGEN_INSTANCE" \
+  --arg web "$WEB_URL" --arg dash "$DASHBOARD_URL" --arg lgi "$LOADGEN_INSTANCE" --arg fis "$FIS_TEMPLATE" \
   '{
     witnessRegion: $witness,
     regions: [
@@ -254,7 +262,8 @@ jq -n \
       {region: $rB, apiUrl: $urlB, functionUrl: $furlB, clusterId: $idB, clusterArn: $arnB, clusterEndpoint: $epB, functionName: $fnB}
     ],
     webUrl: $web,
-    dashboardUrl: $dash
+    dashboardUrl: $dash,
+    fis: {region: $rB, templateId: $fis}
   } + (if $lgi == "" then {} else {loadgen: {region: $rA, instanceId: $lgi}} end)' >"$OUTPUTS"
 
 # Smoke test, through CloudFront: each Region's API reaches its own cluster endpoint.

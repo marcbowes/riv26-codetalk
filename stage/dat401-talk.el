@@ -17,14 +17,18 @@
         ("Step 6 · A race, and foreign keys" . 36)
         ("Step 7 · JSONB, and an index on an expression" . 57)
         ("Step 9 · Change data capture" . 67)
-        ("The API, from one prompt" . 76)
-        ("Scale" . 80)))
+        ("Multi-Region, in a minute" . 76)
+        ("The API, from one prompt" . 77)
+        ("One database, two Regions" . 79)
+        ("The site, from another prompt" . 85)
+        ("20,000 requests a second" . 88)
+        ("Losing a Region" . 89)))
 
 (demo-it-create
  :advanced-mode
  ;; 1. start: Intro
  (progn (dat401-section "Intro") (dat401-layout 'a))
- ;; 2. Step 1 · Two clusters, a connection, a schema (TALK.md line 121): run shell · pane A
+ ;; 2. Step 1 · Two clusters, a connection, a schema (TALK.md line 122): run shell · pane A
  (progn (dat401-section "Step 1 · Two clusters, a connection, a schema") (dat401-layout 'a) (dat401-run 'a "aws dsql create-cluster"))
  ;; 3. stage: highlight identifier
  (dat401-highlight 'a "identifier")
@@ -58,7 +62,7 @@ body text not null,
 created_at timestamptz default now(),
 primary key (post_id, comment_id)
 );")
- ;; 13. Step 2 · Some rows (TALK.md line 260): run psql
+ ;; 13. Step 2 · Some rows (TALK.md line 261): run psql
  (progn (dat401-section "Step 2 · Some rows") (dat401-layout 'a) (dat401-run 'a "insert into posts (title) values ('Hello, DSQL'), ('Second post');"))
  ;; 14. run psql
  (dat401-run 'a "select * from posts;")
@@ -66,13 +70,13 @@ primary key (post_id, comment_id)
  (dat401-run 'a "select id as post_id from posts where title = 'Hello, DSQL' \\gset")
  ;; 16. run psql
  (dat401-run 'a "insert into comments (post_id, body) values (:'post_id', 'First!');")
- ;; 17. Step 3 · Queries (TALK.md line 289): run psql
+ ;; 17. Step 3 · Queries (TALK.md line 290): run psql
  (progn (dat401-section "Step 3 · Queries") (dat401-layout 'a) (dat401-run 'a "\\timing on
 select title, created_at from posts order by created_at desc limit 20;"))
  ;; 18. run psql
  (dat401-run 'a "select p.title, c.body, c.created_at
 from posts p join comments c on c.post_id = p.id;")
- ;; 19. Step 4 · A real schema, a million rows, and a bad plan (TALK.md line 309): run psql
+ ;; 19. Step 4 · A real schema, a million rows, and a bad plan (TALK.md line 310): run psql
  (progn (dat401-section "Step 4 · A real schema, a million rows, and a bad plan") (dat401-layout 'a) (dat401-run 'a "drop table comments, posts;
 \\i sql/01-schema.sql"))
  ;; 20. run psql
@@ -100,7 +104,7 @@ select body, created_at from comments where post_id = :'post_id' order by create
  (dat401-highlight 'a "time" "dpu")
  ;; 30. stage: highlight scan cond
  (dat401-highlight 'a "scan" "cond")
- ;; 31. Step 5 · An index, without downtime (TALK.md line 446): run psql
+ ;; 31. Step 5 · An index, without downtime (TALK.md line 447): run psql
  (progn (dat401-section "Step 5 · An index, without downtime") (dat401-layout 'a) (dat401-run 'a "create index async posts_recent_idx on posts (created_at) include (title);"))
  ;; 32. run psql
  (dat401-run 'a "select job_id, status, object_name from sys.jobs where job_type = 'INDEX_BUILD';
@@ -112,10 +116,10 @@ select title, created_at from posts order by created_at desc limit 20;" "desc li
  (dat401-highlight 'a "time" "dpu")
  ;; 35. stage: highlight scan
  (dat401-highlight 'a "scan")
- ;; 36. Step 6 · A race, and foreign keys (TALK.md line 505): run psql · both panes (in A)
+ ;; 36. Step 6 · A race, and foreign keys (TALK.md line 506): run psql · both panes (in a)
  (progn (dat401-section "Step 6 · A race, and foreign keys") (dat401-layout 'a) (dat401-run 'a "select id as post_id from posts where slug = 'hello-dsql' \\gset
 select id as user_id from users where username = 'raluca' \\gset"))
- ;; 37. copy into B
+ ;; 37. copy into b
  (dat401-copy-into 'a 'b "select id as post_id from posts where slug = 'hello-dsql' \\gset
 select id as user_id from users where username = 'raluca' \\gset")
  ;; 38. race psql · Pane A
@@ -147,10 +151,10 @@ call sys.wait_for_job('<job_id>');")
 select id, 'hello-dsql', 'Hello, DSQL', 'again' from users where username = 'marc';")
  ;; 48. run psql · pane B
  (dat401-run 'b "\\c")
- ;; 49. run psql · both panes (in A)
+ ;; 49. run psql · both panes (in a)
  (dat401-run 'a "select id as post_id from posts where slug = 'hello-dsql' \\gset
 select id as user_id from users where username = 'raluca' \\gset")
- ;; 50. copy into B
+ ;; 50. copy into b
  (dat401-copy-into 'a 'b "select id as post_id from posts where slug = 'hello-dsql' \\gset
 select id as user_id from users where username = 'raluca' \\gset")
  ;; 51. race psql · Pane A
@@ -165,7 +169,7 @@ select id as user_id from users where username = 'raluca' \\gset")
  (dat401-run 'a "commit;")
  ;; 56. race psql · Pane B
  (dat401-run 'b "commit;")
- ;; 57. Step 7 · JSONB, and an index on an expression (TALK.md line 613): run psql
+ ;; 57. Step 7 · JSONB, and an index on an expression (TALK.md line 614): run psql
  (progn (dat401-section "Step 7 · JSONB, and an index on an expression") (dat401-layout 'a) (dat401-run 'a "select title, metadata from posts limit 2;"))
  ;; 58. run psql
  (dat401-run 'a "explain analyze verbose
@@ -192,7 +196,7 @@ order by created_at desc limit 20;" "= 'databases'")
  (dat401-run 'a "explain analyze select title from posts where metadata->'category' = '\"databases\"' limit 20;")
  ;; 66. stage: highlight scan filter
  (dat401-highlight 'a "scan" "filter")
- ;; 67. Step 9 · Change data capture (TALK.md line 726): run shell · pane events
+ ;; 67. Step 9 · Change data capture (TALK.md line 727): run shell · pane events
  (progn (dat401-section "Step 9 · Change data capture") (dat401-layout 'a 'events) (dat401-run 'events "aws kinesis create-stream --stream-name dat401-cdc --stream-mode-details StreamMode=ON_DEMAND --max-record-size-in-ki-b 10240"))
  ;; 68. run shell · pane events
  (dat401-run 'events "aws iam get-role --role-name dat401-cdc --query Role.Arn")
@@ -210,17 +214,44 @@ order by created_at desc limit 20;" "= 'databases'")
  (dat401-run 'a "select id as post_id from posts where slug like 'post-%' limit 1 \\gset")
  ;; 75. run psql
  (dat401-run 'a "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Hello from the stage');")
- ;; 76. The API, from one prompt (TALK.md line 873): prompt, typed into the agent
- (progn (dat401-section "The API, from one prompt") (dat401-layout 'a) (dat401-agent "in ./blog build a typescript api for my blog on aurora dsql w/ drizzle orm. cluster endpoint is in $PGHOST, connect as admin. tables already exist so just read teh schema from the db. ops: list posts (newest first w/ author), get post (with its comments + each comenters username), create post, add comment. give me an http server and a small cli that calls it over http. then start the server and use the cli to chcek every op works"))
- ;; 77. close the agent
+ ;; 76. Multi-Region, in a minute (TALK.md line 861): run shell
+ (progn (dat401-section "Multi-Region, in a minute") (dat401--show 'shell) (dat401-run 'shell "open https://console.aws.amazon.com/dsql/home?region=us-west-2"))
+ ;; 77. The API, from one prompt (TALK.md line 894): prompt, shown in the agent
+ (progn (dat401-section "The API, from one prompt") (dat401-agent "the blog schema is already in the dsql cluster at $PGHOST, read it from teh db. build a typescript crud api for it w/ hono + drizzle orm, using the aurora dsql drizzle adapter. ops: list posts newest first w/ author, get a post w/ its comments + each commenters username, create post, add comment. retry writes on occ conflicts. deploy it to lambda in us-west-2 and us-east-1, one function per region talking to its own regions endpoint, then call every op in both regions to check it works"))
+ ;; 78. close the agent
  (dat401-quit-agent)
- ;; 78. code demo/api/src/db.ts
- (dat401-code "demo/api/src/db.ts" '((4 . 5) (18 . 24) (36 . 37)))
- ;; 79. code demo/api/src/queries.ts
- (dat401-code "demo/api/src/queries.ts" '((204 . 204) (209 . 212) (215 . 217) (221 . 225)))
- ;; 80. Scale (TALK.md line 1013): run shell
- (progn (dat401-section "Scale") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
+ ;; 79. One database, two Regions (TALK.md line 922): paste shell · pane us-west-2 paste
+ (progn (dat401-section "One database, two Regions") (dat401-layout 'us-west-2 'us-east-1) (dat401-paste 'us-west-2 "export PGHOST=<us-west-2-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGPASSWORD=\"$(aws dsql generate-db-connect-admin-auth-token --region us-west-2 --hostname $PGHOST --expires-in 3600)\"
+psql"))
+ ;; 80. paste shell · pane us-east-1 paste
+ (dat401-paste 'us-east-1 "export PGHOST=<us-east-1-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
+export PGPASSWORD=\"$(aws dsql generate-db-connect-admin-auth-token --region us-east-1 --hostname $PGHOST --expires-in 3600)\"
+psql")
+ ;; 81. run psql · both regions (in us-west-2)
+ (dat401-run 'us-west-2 "select count(*) from posts;
+select title from posts order by created_at desc limit 1;")
+ ;; 82. copy into us-east-1
+ (dat401-copy-into 'us-west-2 'us-east-1 "select count(*) from posts;
+select title from posts order by created_at desc limit 1;")
+ ;; 83. run psql · pane us-west-2
+ (dat401-run 'us-west-2 "update posts set title = title || ' (live from re:Invent)'
+where id = (select id from posts order by created_at desc limit 1);")
+ ;; 84. recall (Ctrl-R desc limit 1)
+ (dat401-recall 'us-east-1 "select title from posts order by created_at desc limit 1;" "desc limit 1")
+ ;; 85. The site, from another prompt (TALK.md line 974): prompt, shown in the agent
+ (progn (dat401-section "The site, from another prompt") (dat401-agent "now a web app for the blog api: react + vite, deployed on s3 + cloudfront. show one region by default (a ?region= param picks), with a toggle to show both regions side by side so i can open a post in one and watch a comment i write there show up in teh other. show the round trip and the db time for every request"))
+ ;; 86. close the agent
+ (dat401-quit-agent)
+ ;; 87. run shell
+ (dat401-run 'shell "open <blog-url>")
+ ;; 88. 20,000 requests a second (TALK.md line 1037): run shell
+ (progn (dat401-section "20,000 requests a second") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
 ./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""))
+ ;; 89. Losing a Region (TALK.md line 1084): run shell, then cue browser
+ (progn (dat401-section "Losing a Region") (dat401--show 'shell) (progn (dat401-run 'shell "aws fis start-experiment --region us-east-1 --experiment-template-id <fis-template-id> --query experiment.id --output text") (dat401-cue "browser")))
+ ;; 90. run shell, then cue browser
+ (progn (dat401-run 'shell "aws fis stop-experiment --region us-east-1 --id <fis-experiment-id> --query experiment.state.status --output text") (dat401-cue "browser"))
  )
 
 ;;; dat401-talk.el ends here

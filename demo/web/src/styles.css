@@ -105,7 +105,7 @@ textarea {
   font-size: var(--step--1);
 }
 
-.mirror {
+.toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -114,7 +114,7 @@ textarea {
   cursor: pointer;
 }
 
-.mirror input {
+.toggle input {
   width: 1.1rem;
   height: 1.1rem;
   accent-color: #fff;
@@ -137,11 +137,72 @@ textarea {
   overflow: hidden;
 }
 
+/* Holds the scrolling body and, while the Region is down, the overlay on top of it. */
+.column-main {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
 .column-body {
   position: relative; /* contains .visually-hidden, which would otherwise stretch the page */
   overflow-y: auto;
   padding: 1.1rem 2rem 3rem;
   scroll-behavior: smooth;
+}
+
+/* ------------------------------------------------- Region down (FIS demo) */
+
+.column-main.down .column-body {
+  opacity: 0.3;
+  filter: grayscale(0.7);
+  pointer-events: none;
+}
+
+.down-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: color-mix(in oklab, var(--surface) 45%, transparent);
+}
+
+.down-card {
+  display: grid;
+  justify-items: center;
+  gap: 1rem;
+  padding: 1.6rem 2.2rem 1.5rem;
+  border-top: 8px solid var(--region);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 0.4rem 1.6rem color-mix(in oklab, var(--ink) 18%, transparent);
+  text-align: center;
+}
+
+.down-card p {
+  margin: 0;
+  max-width: 22ch;
+  font-size: var(--step-2);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.spinner {
+  width: 3.6rem;
+  height: 3.6rem;
+  border-radius: 50%;
+  border: 0.45rem solid color-mix(in oklab, var(--region) 22%, var(--surface));
+  border-top-color: var(--region);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 /* ----------------------------------------------------- region header (the bold part) */
@@ -571,6 +632,9 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .column-body {
     scroll-behavior: auto;
+  }
+  .spinner {
+    animation-duration: 2.4s;
   }
   .comment.arrived {
     animation: none;

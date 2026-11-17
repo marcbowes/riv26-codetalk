@@ -150,11 +150,20 @@ def clean_command(text, lang):
     return "\n".join(out)
 
 
+REGION = r"[a-z]{2}-[a-z]+-\d"
+REGIONS = ["us-west-2", "us-east-1"]   # the finished app's two Regions, left to right
+
+
 def panes_for(target, command):
     """speaker's target label -> the panes to type into."""
     t = (target or "").lower()
     if "both panes" in t:
         return ["a", "b"]
+    if "both regions" in t:
+        return list(REGIONS)
+    m = re.search(r"\bpane (%s)\b" % REGION, t)
+    if m:
+        return [m.group(1)]
     if "pane b" in t:
         return ["b"]
     if "pane a" in t:
@@ -176,6 +185,8 @@ def layout_for(panes):
     s = set(panes)
     if "load" in s:
         return ["load"]
+    if s & set(REGIONS):
+        return list(REGIONS)
     if "b" in s:
         return ["a", "b"]
     if "claude" in s:
@@ -202,6 +213,10 @@ PANES = ("a", "b", "shell", "events")
 def cue_form(direction, pane, line):
     """A <!-- stage: ... --> direction -> an Elisp form."""
     words = direction.split()
+    if len(words) >= 2 and words[0] == "cue":
+        # A reminder for the presenter (switch to the browser), shown when
+        # the command before it is done. It rides along with that F12.
+        return "(dat401-cue %s)" % el(" ".join(words[1:]))
     if len(words) >= 2 and words[0] == "highlight":
         return "(dat401-highlight '%s %s)" % (pane, " ".join(el(w) for w in words[1:]))
     if words == ["clear"]:
@@ -210,7 +225,7 @@ def cue_form(direction, pane, line):
             and words[2].lower() in PANES:
         return "(dat401-%s '%s)" % (words[0], words[2].lower())
     raise SystemExit("TALK.md line %s: unknown stage direction %r (expected `highlight "
-                     "<field>`, `clear`, or `open|close pane <pane>`)" % (line, direction))
+                     "<field>`, `clear`, `cue <text>`, or `open|close pane <pane>`)" % (line, direction))
 
 
 def step_forms(step):
@@ -243,12 +258,15 @@ def step_forms(step):
                 search = lowercase_sql(recall.group(1).strip()) or text.splitlines()[-1].rstrip(";")[-12:]
                 add(panes, "recall (Ctrl-R %s)" % search,
                     "(dat401-recall '%s %s %s)" % (panes[0], el(text), el(search)))
-            elif panes == ["a", "b"]:
-                # Both panes: type it in A, then (another F12) copy each line
-                # from A's screen into B, as you would. Not typed twice.
-                add(["a"], "%s %s (in A)" % (kind.lower(), b.get("target") or ""),
-                    "(dat401-run 'a %s)" % el(text))
-                add(["b"], "copy into B", "(dat401-copy-into 'a 'b %s)" % el(text))
+            elif len(panes) == 2:
+                # Both panes (or both Regions): type it in the first, then
+                # (another F12) copy each line from its screen into the
+                # second, as you would. Not typed twice.
+                first, second = panes
+                add([first], "%s %s (in %s)" % (kind.lower(), b.get("target") or "", first),
+                    "(dat401-run '%s %s)" % (first, el(text)))
+                add([second], "copy into %s" % second,
+                    "(dat401-copy-into '%s '%s %s)" % (first, second, el(text)))
             elif "paste" in (b.get("target") or "").lower().split():
                 add(panes, "paste %s" % b.get("target"),
                     "(dat401-paste '%s %s)" % (panes[0], el(text)))
@@ -256,15 +274,19 @@ def step_forms(step):
                 add(panes, "%s %s" % (kind.lower(), b.get("target") or ""),
                     "(dat401-run %s %s)" % (el_panes(panes), el(text)))
         elif kind == "PROMPT":
-            # Typed into Claude Code in a frame beside A, never submitted; the
-            # next F12 closes the frame ("I did this earlier, so you don't
-            # have to wait").
-            add(["claude"], "prompt, typed into the agent", "(dat401-agent %s)" % el(b.get("command") or ""))
+            # Claude Code full screen with the prompt already in it, never
+            # submitted; the next F12 closes it ("I did this earlier, so you
+            # don't have to wait").
+            add(["claude"], "prompt, shown in the agent", "(dat401-agent %s)" % el(b.get("command") or ""))
             add([], "close the agent", "(dat401-quit-agent)")
         elif kind == "CUE":
             form = cue_form(b["target"], last_pane, b["line"])
             if form.startswith("(dat401-close "):
                 merge.append(form)
+            elif form.startswith("(dat401-cue ") and forms:
+                panes, comment, prev = forms[-1]
+                forms[-1] = (panes, "%s, then cue %s" % (comment, b["target"][4:]),
+                             "(progn %s %s)" % (prev, form))
             else:
                 add([], "stage: %s" % b["target"], form)
         elif kind == "SHOW":
@@ -316,10 +338,18 @@ def generate(talk):
             # they need them (step 1: create the cluster in A, then connect
             # in A and B).
             p0, c0, f0 = forms[0]
-            layout = layout_for(p0[:1]) if p0 else ["a"]
             index.append((title, len(steps) + 1))
-            head = "(progn (dat401-section %s) (dat401-layout %s) %s)" % (
-                el(title), " ".join("'" + p for p in layout), f0)
+            if p0[:1] == ["shell"]:
+                # The shell joins whatever's on screen (under psql A, the
+                # two Regions, or the load generator).
+                scene = "(dat401--show 'shell)"
+            elif p0[:1] == ["claude"]:
+                # The agent takes the whole screen, then puts back what was there.
+                scene = ""
+            else:
+                layout = layout_for(p0[:1]) if p0 else ["a"]
+                scene = "(dat401-layout %s)" % " ".join("'" + p for p in layout)
+            head = "(progn (dat401-section %s) %s)" % (el(title), " ".join(x for x in (scene, f0) if x))
             steps.append(("%s (TALK.md line %s): %s" % (title, s["line"], c0), head))
             for _, c, f in forms[1:]:
                 steps.append((c, f))

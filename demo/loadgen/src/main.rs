@@ -5,6 +5,7 @@ mod api;
 mod app;
 mod cli;
 mod control;
+mod failover;
 mod mix;
 mod monitor;
 mod pool;

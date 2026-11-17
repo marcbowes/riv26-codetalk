@@ -1,10 +1,13 @@
 # DAT401 demo: the polished multi-Region blog
 
-The finished version of the blog built live in the talk, shown in minutes 35 to 45. One Aurora DSQL
-database is peered across two Regions, with a Lambda API in each Region and a React page that
-shows both side by side. Write a comment in us-west-2 and the next read in us-east-1 already has
-it. Then `loadgen/` throws traffic at it and the CloudWatch dashboard shows Lambda and DSQL
-scaling with no provisioning.
+The finished version of the blog built live in the talk, shown in its last ten minutes. One
+Aurora DSQL database is peered across two Regions, with a Lambda API in each Region and a React
+page. The page shows one Region (`?region=us-east-1` picks which; the first by default), and
+**Show both Regions** puts them side by side: write a comment in us-west-2 and the next read in
+us-east-1 already has it. Then `loadgen/` throws 20,000 requests a second at it, and an FIS
+experiment (`Dat401-Fis-us-east-1`) makes us-east-1's DSQL endpoint refuse connections: the load
+generator moves that Region's traffic to us-west-2, and the page's us-east-1 column shows a
+spinner until the experiment stops.
 
 ```
             CloudFront (Dat401-Web)                 /*  React UI from S3: one column per Region
@@ -24,7 +27,7 @@ scaling with no provisioning.
 |---|---|
 | `api/` | Hono app (`src/app.ts`), Drizzle schema (`src/schema.ts`) and queries; `src/local.ts` (dev server), `src/lambda.ts` (handler) |
 | `db/` | `setup.ts`: idempotent schema, async indexes, `blog_app` role, `AWS IAM GRANT`s, seed data |
-| `infra/` | CDK app: `Dat401-Cluster-<region>` ×2, `Dat401-Api-<region>` ×2, `Dat401-Web`, `Dat401-Dashboard`, `Dat401-Loadgen` (EC2 load generator host) |
+| `infra/` | CDK app: `Dat401-Cluster-<region>` ×2, `Dat401-Api-<region>` ×2, `Dat401-Web`, `Dat401-Dashboard`, `Dat401-Loadgen` (EC2 load generator host), `Dat401-Fis-<REGION_B>` (the FIS experiment template) |
 | `web/` | Vite + React UI, reads `/config.json` at runtime |
 | `loadgen/` | Rust load generator (see its own README); `--run-on-ec2` runs it on the `Dat401-Loadgen` host over SSM |
 
@@ -54,8 +57,11 @@ cd demo
    roles, seed data if the tables are empty)
 6. builds the web app and deploys it with the API URLs baked into `config.json`
 7. deploys the dashboard
-8. writes `outputs.json` (the API URLs, cluster ids/endpoints, web and dashboard URLs, used by
-   `loadgen/`) and pings each API's `/health`
+8. deploys the FIS experiment template: REGION_B's cluster refuses connections, for at most 10
+   minutes (`aws fis start-experiment --region us-east-1 --experiment-template-id <fis.templateId>`)
+9. deploys the load generator host
+10. writes `outputs.json` (the API URLs, cluster ids/endpoints, web and dashboard URLs, the FIS
+   template, used by `loadgen/` and the stage) and pings each API's `/health`
 
 Settings (environment variables): `REGION_A` (us-west-2), `REGION_B` (us-east-1),
 `WITNESS_REGION` (us-east-2), `SKIP_BOOTSTRAP=1`, and `SETUP_ARGS` for extra

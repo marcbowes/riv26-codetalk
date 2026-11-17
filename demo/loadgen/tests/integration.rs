@@ -377,3 +377,130 @@ fn help_explains_the_gentle_ramp() {
     assert!(help.contains("1,000 per Region"), "{help}");
     assert!(help.contains("HTTP/1.1"), "{help}");
 }
+
+/// Timeline points (from the report) while Region `t` was in `state`.
+fn timeline_in(report: &Value, t: usize, state: &str) -> Vec<Value> {
+    report["timeline"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["regions"][t]["state"] == state)
+        .cloned()
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failing_region_fails_over_and_comes_back() {
+    let shared = Shared::seed(SeedConfig::default());
+    let west = server("west", shared.clone(), |_| {}).await;
+    let east = server("east", shared, |_| {}).await;
+    // East answers 503 from about 2.5 s to 5.5 s after loadgen starts (it
+    // bootstraps in well under a second against the mock).
+    let state = east.state.clone();
+    let outage = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+        state.failing.store(true, Relaxed);
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        state.failing.store(false, Relaxed);
+    });
+    let run = loadgen(&[
+        "--url",
+        &west.url(),
+        "--url",
+        &east.url(),
+        "--rps",
+        "2000",
+        "--ramp",
+        "0",
+        "--duration",
+        "11s",
+        "--refresh",
+        "0",
+    ])
+    .await;
+    outage.await.unwrap();
+    let r = &run.report;
+    assert_eq!(r["config"]["failover"], true);
+    let regions = r["regions"].as_array().unwrap();
+    assert_eq!(u(&regions[0]["failovers"]), 0);
+    assert_eq!(u(&regions[1]["failovers"]), 1);
+    assert!(u(&regions[1]["errors"]["server5xx"]) > 0);
+    assert!(east.state.failed.load(Relaxed) > 0);
+
+    // While east was down (after its first second), west took nearly all of
+    // the traffic, and the total stayed near the target.
+    let down = timeline_in(r, 1, "down");
+    assert!(down.len() >= 4, "down for {} s\n{}", down.len(), run.stdout);
+    for p in &down[1..] {
+        let west_tps = p["regions"][0]["tps"].as_f64().unwrap();
+        let total = p["totalTps"].as_f64().unwrap();
+        assert!(west_tps >= 1700.0, "west {west_tps} at {}", p["t"]);
+        assert!(total >= 1700.0, "total {total} at {}", p["t"]);
+        assert!(p["regions"][1]["rate"].as_f64().unwrap() <= 50.0, "{p}");
+        assert!(p["regions"][0]["rate"].as_f64().unwrap() >= 1950.0, "{p}");
+    }
+
+    // Then its probes came back healthy, and its traffic started moving back.
+    let returning = timeline_in(r, 1, "returning");
+    assert!(!returning.is_empty(), "never came back\n{}", run.stdout);
+    let last = returning.last().unwrap();
+    assert!(
+        last["regions"][1]["tps"].as_f64().unwrap() >= 50.0,
+        "{last}"
+    );
+    assert!(
+        run.stdout.contains("east: ") && run.stdout.contains("sending its traffic to west"),
+        "{}",
+        run.stdout
+    );
+    assert!(
+        run.stdout.contains("east answering again"),
+        "{}",
+        run.stdout
+    );
+    assert!(run.stdout.contains("east DOWN"), "{}", run.stdout);
+    // About 2,000/s for 11 s, minus the second it took to notice.
+    let ok = u(&r["totals"]["ok"]);
+    assert!(ok >= 18_500, "ok {ok}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_failover_keeps_sending_to_a_failing_region() {
+    let shared = Shared::seed(SeedConfig::default());
+    let west = server("west", shared.clone(), |_| {}).await;
+    let east = server("east", shared, |_| {}).await;
+    let state = east.state.clone();
+    let outage = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        state.failing.store(true, Relaxed);
+    });
+    let run = loadgen(&[
+        "--url",
+        &west.url(),
+        "--url",
+        &east.url(),
+        "--no-failover",
+        "--rps",
+        "1000",
+        "--ramp",
+        "0",
+        "--duration",
+        "4s",
+        "--refresh",
+        "0",
+    ])
+    .await;
+    outage.await.unwrap();
+    let r = &run.report;
+    assert_eq!(r["config"]["failover"], false);
+    let regions = r["regions"].as_array().unwrap();
+    assert_eq!(u(&regions[1]["failovers"]), 0);
+    let (rw, re) = (
+        u(&regions[0]["requests"]) as f64,
+        u(&regions[1]["requests"]) as f64,
+    );
+    let share = rw / (rw + re);
+    assert!((0.4..=0.6).contains(&share), "west share {share}");
+    assert!(u(&regions[1]["errors"]["server5xx"]) > 500);
+    assert!(!run.stdout.contains("DOWN"), "{}", run.stdout);
+}

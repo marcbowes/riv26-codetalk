@@ -7,7 +7,11 @@ export const STACKS = {
   web: "Dat401-Web",
   dashboard: "Dat401-Dashboard",
   loadgen: "Dat401-Loadgen",
+  fis: (region: string) => `Dat401-Fis-${region}`,
 } as const;
+
+/** The role AWS FIS assumes to fail a Region's DSQL connections. */
+export const fisRoleName = (region: string) => `dat401-fis-${region}`;
 
 /** Lambda function name (per Region; the same name in each). */
 export const FUNCTION_NAME = "dat401-blog-api";

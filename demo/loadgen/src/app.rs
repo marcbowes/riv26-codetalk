@@ -16,6 +16,7 @@ use tokio::time::MissedTickBehavior;
 use crate::api;
 use crate::cli::Args;
 use crate::control::{Adjust, Controller};
+use crate::failover::{self, Failover};
 use crate::mix::{Mix, MixConfig};
 use crate::monitor::{Monitor, TICK, ViewInfo};
 use crate::pool::IdPool;
@@ -442,6 +443,7 @@ pub async fn run(args: Args, threads: usize, fd_limit: Option<u64>) -> Result<()
         start,
         stop: AtomicBool::new(false),
         events: EventLog::new(start, plain),
+        failover: Failover::new(n, mode == Mode::Rate && !args.no_failover),
     });
     for w in &warnings {
         ctx.events.push(format!("warning: {w}"));
@@ -519,12 +521,20 @@ pub async fn run(args: Args, threads: usize, fd_limit: Option<u64>) -> Result<()
                 if let Some(adj) = adj {
                     ctx.events.push(describe(&ctx.targets[t].label, adj, mode));
                 }
+                if let Some(change) = ctx.failover.observe(t, t_now, w) {
+                    let labels: Vec<String> = ctx.targets.iter().map(|x| x.label.clone()).collect();
+                    let to = ctx.failover.receivers_of(t);
+                    ctx.events
+                        .push(failover::describe(&labels, t, &change, &to));
+                }
             }
             monitor.record_second(&ctx, t_now);
             if plain {
                 println!("{}", monitor.plain_line(&ctx, t_now));
             }
         }
+        // Four times a second, so a Region coming back ramps up smoothly.
+        ctx.failover.publish(t_now, &ctx.own_rates(t_now));
         if mode == Mode::Concurrency {
             for (t, (spawned, active)) in workers.iter().zip(&ctx.active).enumerate() {
                 let want = ctx.controller(t).rate(t_now).round() as usize;

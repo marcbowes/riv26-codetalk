@@ -119,7 +119,8 @@ class RealTalk(unittest.TestCase):
         self.assertEqual(out.count("(dat401-run ") + out.count("(dat401-paste ") + out.count("(dat401-agent ")
                          + out.count("(dat401-code ") + out.count("(dat401-highlight ")
                          + out.count("(dat401-unhighlight)") + out.count("(dat401-open ")
-                         + out.count("(dat401-close ") + out.count("(dat401-recall "),
+                         + out.count("(dat401-close ") + out.count("(dat401-recall ")
+                         + out.count("(dat401-cue "),
                          len(cmds))
         self.assertGreaterEqual(out.count("(dat401-recall 'a "), 2)       # re-runs come from history
         self.assertNotIn("(dat401-key ", out)                # no banners: it should look live
@@ -127,8 +128,16 @@ class RealTalk(unittest.TestCase):
         self.assertNotIn("\\n", out[out.index("(dat401-agent "):].split(")", 1)[0])  # no newline: never submitted
         self.assertIn("(dat401-paste 'b \"export PGHOST=<cluster-endpoint>", out)
         self.assertIn("(dat401-highlight 'a \"identifier\")", out)   # step 1
-        self.assertIn('(dat401-code "demo/api/src/db.ts"', out)   # step 4
         self.assertIn("(dat401-copy-into 'a 'b ", out)       # the race: B copies from A
+        # Two Regions: a pane each, the second copies from the first, a re-run
+        # from history, the shell joins what's on screen, and cues for the browser.
+        self.assertIn("(dat401-layout 'us-west-2 'us-east-1)", out)
+        self.assertIn("(dat401-paste 'us-east-1 \"export PGHOST=<us-east-1-endpoint>", out)
+        self.assertIn("(dat401-copy-into 'us-west-2 'us-east-1 ", out)
+        self.assertIn("(dat401-recall 'us-east-1 ", out)
+        self.assertIn("(dat401--show 'shell) (progn (dat401-run 'shell \"aws fis start-experiment", out)
+        self.assertIn("<fis-experiment-id>", out)
+        self.assertEqual(out.count('(dat401-cue "browser")'), 2)
         self.assertNotIn("sdtn7gjobfeglgjbysgk3pog4i", out)  # rehearsal job id replaced
 
     def test_generated_file_is_current(self):

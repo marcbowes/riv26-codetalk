@@ -5,6 +5,7 @@ import type {
   CreateCommentResponse,
   Envelope,
   ErrorResponse,
+  HealthResponse,
   PostResponse,
   PostsResponse,
   UsersResponse,
@@ -44,7 +45,12 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function createClient(baseUrl: string, onSample: (s: Sample) => void) {
+/**
+ * `onSample` gets every sampled call (the latency readouts). `onStatus` gets
+ * the HTTP status of every call, sampled or not, 0 when the API couldn't be
+ * reached or timed out: the column uses it to tell when its Region is down.
+ */
+export function createClient(baseUrl: string, onSample: (s: Sample) => void, onStatus?: (status: number) => void) {
   const base = baseUrl.replace(/\/+$/, "");
 
   async function call<T extends Envelope>(
@@ -80,6 +86,7 @@ export function createClient(baseUrl: string, onSample: (s: Sample) => void) {
       throw new ApiError(0, aborted ? "request timed out" : `could not reach the API (${String(err)})`);
     } finally {
       clearTimeout(timer);
+      onStatus?.(status);
       if (sample) onSample({
         path,
         method,
@@ -93,6 +100,9 @@ export function createClient(baseUrl: string, onSample: (s: Sample) => void) {
   }
 
   return {
+    // Polled in the background to notice the Region going down and coming
+    // back: not a reader's request, so it stays out of the latency readout.
+    health: () => call<HealthResponse>("GET", "/health", undefined, { sample: false }),
     // Static list, no database work: keep it out of the latency readout.
     categories: () => call<CategoriesResponse>("GET", "/categories", undefined, { sample: false }),
     users: (limit = 50) => call<UsersResponse>("GET", `/users?limit=${limit}`),
