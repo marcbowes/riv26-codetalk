@@ -20,9 +20,14 @@
         ("Multi-Region, in a minute" . 76)
         ("The API, from one prompt" . 77)
         ("One database, two Regions" . 79)
-        ("The site, from another prompt" . 85)
-        ("20,000 requests a second" . 88)
-        ("Losing a Region" . 89)))
+        ("The site, from another prompt" . 87)
+        ("20,000 requests a second" . 90)
+        ("Losing a Region" . 91)))
+
+;; The prompts, in order: each gets its own Claude Code pane at `dat401-start'.
+(setq dat401--prompts
+      (list "the blog schema is already in the dsql cluster at $PGHOST, read it from teh db. build a typescript crud api for it w/ hono + drizzle orm, using the aurora dsql drizzle adapter. ops: list posts newest first w/ author, get a post w/ its comments + each commenters username, create post, add comment. retry writes on occ conflicts. deploy it to lambda in us-west-2 and us-east-1, one function per region talking to its own regions endpoint, then call every op in both regions to check it works"
+            "now a web app for the blog api: react + vite, deployed on s3 + cloudfront. show one region by default (a ?region= param picks), with a toggle to show both regions side by side so i can open a post in one and watch a comment i write there show up in teh other. show the round trip and the db time for every request"))
 
 (demo-it-create
  :advanced-mode
@@ -214,43 +219,50 @@ order by created_at desc limit 20;" "= 'databases'")
  (dat401-run 'a "select id as post_id from posts where slug like 'post-%' limit 1 \\gset")
  ;; 75. run psql
  (dat401-run 'a "insert into comments (post_id, user_id, body) values (:'post_id', :'user_id', 'Hello from the stage');")
- ;; 76. Multi-Region, in a minute (TALK.md line 861): run shell
- (progn (dat401-section "Multi-Region, in a minute") (dat401--show 'shell) (dat401-run 'shell "open https://us-west-2.console.aws.amazon.com/dsql/create-cluster/home"))
- ;; 77. The API, from one prompt (TALK.md line 894): prompt, shown in the agent
+ ;; 76. Multi-Region, in a minute (TALK.md line 861): stage: cue console: us-west-2.console.aws.amazon.com/dsql/create-cluster/home
+ (progn (dat401-section "Multi-Region, in a minute") (dat401-layout 'a) (dat401-cue "console: us-west-2.console.aws.amazon.com/dsql/create-cluster/home"))
+ ;; 77. The API, from one prompt (TALK.md line 891): prompt, shown in the agent
  (progn (dat401-section "The API, from one prompt") (dat401-agent "the blog schema is already in the dsql cluster at $PGHOST, read it from teh db. build a typescript crud api for it w/ hono + drizzle orm, using the aurora dsql drizzle adapter. ops: list posts newest first w/ author, get a post w/ its comments + each commenters username, create post, add comment. retry writes on occ conflicts. deploy it to lambda in us-west-2 and us-east-1, one function per region talking to its own regions endpoint, then call every op in both regions to check it works"))
  ;; 78. close the agent
  (dat401-quit-agent)
- ;; 79. One database, two Regions (TALK.md line 922): paste shell · pane us-west-2 paste
+ ;; 79. One database, two Regions (TALK.md line 921): paste shell · pane us-west-2 paste
  (progn (dat401-section "One database, two Regions") (dat401-layout 'us-west-2 'us-east-1) (dat401-paste 'us-west-2 "export PGHOST=<us-west-2-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 export PGPASSWORD=\"$(aws dsql generate-db-connect-admin-auth-token --region us-west-2 --hostname $PGHOST --expires-in 3600)\"
 psql"))
- ;; 80. paste shell · pane us-east-1 paste
+ ;; 80. stage: highlight region
+ (dat401-highlight 'us-west-2 "region")
+ ;; 81. paste shell · pane us-east-1 paste
  (dat401-paste 'us-east-1 "export PGHOST=<us-east-1-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 export PGPASSWORD=\"$(aws dsql generate-db-connect-admin-auth-token --region us-east-1 --hostname $PGHOST --expires-in 3600)\"
 psql")
- ;; 81. run psql · both regions (in us-west-2)
- (dat401-run 'us-west-2 "select count(*) from posts;
-select title from posts order by created_at desc limit 1;")
- ;; 82. copy into us-east-1
- (dat401-copy-into 'us-west-2 'us-east-1 "select count(*) from posts;
-select title from posts order by created_at desc limit 1;")
- ;; 83. run psql · pane us-west-2
- (dat401-run 'us-west-2 "update posts set title = title || ' (live from re:Invent)'
-where id = (select id from posts order by created_at desc limit 1);")
- ;; 84. recall (Ctrl-R desc limit 1)
- (dat401-recall 'us-east-1 "select title from posts order by created_at desc limit 1;" "desc limit 1")
- ;; 85. The site, from another prompt (TALK.md line 974): prompt, shown in the agent
+ ;; 82. stage: highlight region
+ (dat401-highlight 'us-east-1 "region")
+ ;; 83. run psql · both regions (in us-west-2)
+ (dat401-run 'us-west-2 "\\timing on
+select count(*) from posts;
+select id, title from posts order by created_at desc limit 1;
+\\timing off")
+ ;; 84. copy into us-east-1
+ (dat401-copy-into 'us-west-2 'us-east-1 "\\timing on
+select count(*) from posts;
+select id, title from posts order by created_at desc limit 1;
+\\timing off")
+ ;; 85. run psql · pane us-west-2
+ (dat401-run 'us-west-2 "update posts set title = title || ' (live from re:Invent)' where id = '<post-id>';")
+ ;; 86. recall (Ctrl-R desc limit 1)
+ (dat401-recall 'us-east-1 "select id, title from posts order by created_at desc limit 1;" "desc limit 1")
+ ;; 87. The site, from another prompt (TALK.md line 984): prompt, shown in the agent
  (progn (dat401-section "The site, from another prompt") (dat401-agent "now a web app for the blog api: react + vite, deployed on s3 + cloudfront. show one region by default (a ?region= param picks), with a toggle to show both regions side by side so i can open a post in one and watch a comment i write there show up in teh other. show the round trip and the db time for every request"))
- ;; 86. close the agent
+ ;; 88. close the agent
  (dat401-quit-agent)
- ;; 87. run shell
+ ;; 89. run shell
  (dat401-run 'shell "open <blog-url>")
- ;; 88. 20,000 requests a second (TALK.md line 1037): run shell
+ ;; 90. 20,000 requests a second (TALK.md line 1047): run shell
  (progn (dat401-section "20,000 requests a second") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
 ./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""))
- ;; 89. Losing a Region (TALK.md line 1084): run shell, then cue browser
+ ;; 91. Losing a Region (TALK.md line 1094): run shell, then cue browser
  (progn (dat401-section "Losing a Region") (dat401--show 'shell) (progn (dat401-run 'shell "aws fis start-experiment --region us-east-1 --experiment-template-id <fis-template-id> --query experiment.id --output text") (dat401-cue "browser")))
- ;; 90. run shell, then cue browser
+ ;; 92. run shell, then cue browser
  (progn (dat401-run 'shell "aws fis stop-experiment --region us-east-1 --id <fis-experiment-id> --query experiment.state.status --output text") (dat401-cue "browser"))
  )
 

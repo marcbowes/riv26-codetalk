@@ -124,6 +124,36 @@
                                      "% aws fis start-experiment --experiment-template-id EXT9aBcDeFgHiJkLm\nEXPa1B2c3D4e5F6g7\n% ")
                  "EXPa1B2c3D4e5F6g7")))
 
+(ert-deftest dat401-prepared-agent-is-only-shown ()
+  ;; dat401-start started the agent with its prompt in: the press just shows it.
+  (let* ((dat401--prompts '("first prompt" "second\nprompt"))
+         (buf (get-buffer-create "*claude-2*"))
+         (sent '()) (layouts '()) (dat401--layout '(us-west-2 us-east-1)) (dat401--current-agent nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'dat401-layout) (lambda (&rest ps) (push ps layouts) (setq dat401--layout ps)))
+                  ((symbol-function 'dat401-unhighlight) #'ignore)
+                  ((symbol-function 'dat401--send) (lambda (&rest a) (push a sent)))
+                  ((symbol-function 'dat401--kill-terminal) #'ignore))
+          (with-current-buffer buf (setq dat401--agent-prompt "second prompt"))
+          (should (eq (dat401--agent-pane-for "second\n  prompt") 'claude-2))
+          (dat401-agent "second\nprompt")
+          (should (equal (car layouts) '(claude-2)))
+          (should-not sent)                                   ; nothing typed or pasted
+          (dat401-quit-agent)
+          (should (equal (car layouts) '(us-west-2 us-east-1)))
+          (should-not dat401--current-agent))
+      (kill-buffer buf))))
+
+(ert-deftest dat401-region-and-post-id ()
+  (let ((region (cdr (assoc "region" dat401--named-marks)))
+        (pane "❯ export PGHOST=mfue6hclwyie77bo2ybkyqnbry.dsql.us-east-1.on.aws PGUSER=admin"))
+    (should (string-match region pane))
+    (should (equal (match-string 1 pane) "us-east-1")))
+  (should (equal (dat401--last-match (cdr (assoc "post-id" dat401--scraped))
+                                     "                  id                  | title\n 71b44212-d760-42c5-8ae5-541baf2d184b | A practical guide\n(1 row)\n")
+                 "71b44212-d760-42c5-8ae5-541baf2d184b"))
+  (should (dat401--id-like-p "71b44212-d760-42c5-8ae5-541baf2d184b")))
+
 (ert-deftest dat401-cue-is-a-quiet-note ()
   (let ((shown '()))
     (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) shown))))

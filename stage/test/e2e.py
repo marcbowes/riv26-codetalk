@@ -218,9 +218,13 @@ def main():
         ("DDL typed without indentation, in lower case", "(> id uuid primary key" in a),
         ("rows: comment inserted via :'post_id'", "values (:'post_id', 'First!');\nINSERT 0 1" in a),
         ("tables created", a.count("CREATE TABLE") >= 3),
-        ("finale: console and site opened from the shell",
-         ": open https://us-west-2.console.aws.amazon.com/dsql/create-cluster/home" in shell
-         and bool(re.search(r": open https://\S+\.cloudfront\.net", shell))),
+        ("finale: the site opened from the shell, the console only cued",
+         "console.aws.amazon.com" not in shell and bool(re.search(r": open https://\S+\.cloudfront\.net", shell))),
+        ("finale: each Region highlighted in its PGHOST",
+         bool(re.search(r"us-west-2 \(\"us-west-2\"\)", read(out, "region-marks.txt")))
+         and bool(re.search(r"us-east-1 \(\"us-east-1\"\)", read(out, "region-marks.txt")))),
+        ("finale: the count and the newest post timed in both Regions",
+         all("Timing is on." in p and "Timing is off." in p and re.search(r"\nTime: [0-9.]+ ms", p) for p in (west, east))),
         ("finale: both prompts shown whole, never submitted",
          agent.count("build a typescript crud api") == 1 and agent.count("now a web app for the blog api") == 1
          and "then call every op in both regions to check it works" in agent),
@@ -229,8 +233,9 @@ def main():
          and "postgres=>" in west and "postgres=>" in east),
         ("finale: the same count in both Regions", bool(count_of(west)) and count_of(west) == count_of(east)),
         ("finale: us-east-1's statements copied from us-west-2", "select count(*) from posts;" in east),
-        ("finale: the edit in us-west-2, read straight back in us-east-1",
-         "UPDATE 1" in west and LIVE_EDIT.strip() in east.split("UPDATE")[-1]),
+        ("finale: the edit in us-west-2, by the id copied from its output",
+         bool(re.search(r"where id = '[0-9a-f]{8}-[0-9a-f-]{27}';\s*UPDATE 1", west))),
+        ("finale: the edit read straight back in us-east-1", LIVE_EDIT.strip() in east),
         ("finale: us-east-1's re-read came from history",
          (read(out, "recalls.txt").split() or ["0", "0"]) == ["1", "0"]),
         ("finale: FIS experiment started, then stopped",
@@ -243,7 +248,8 @@ def main():
          "sending its traffic to us-west-2" in read(out, "load-fis.txt")
          and "answering again" in read(out, "load-fis.txt") and "Failovers: 1" in load),
         ("finale: no unresolved placeholders typed",
-         not re.search(r"<(blog-url|fis-template-id|fis-experiment-id|us-[a-z]+-\d-endpoint)>", shell + west + east)),
+         not re.search(r"<(blog-url|fis-template-id|fis-experiment-id|post-id|us-[a-z]+-\d-endpoint)>",
+                       shell + west + east)),
         ("real schema loaded with \\i", "INSERT 0 1" in a),
         ("loader ran in the shell pane", "Done in" in shell),
         ("bad plan shown (full scan + sort)", "top-N heapsort" in a),

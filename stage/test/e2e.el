@@ -60,6 +60,11 @@
     (dat401-e2e--log "laying out pane A")
     (dat401-layout 'a)
     (dat401-e2e--log "pane A up")
+    ;; As dat401-start does: the agent panes, prompts in, before the talk.
+    (dat401--prepare-agents)
+    (dat401-e2e--log "agents prepared: %S" (mapcar (lambda (i) (dat401--agent-ready-p (intern (format "claude-%d" (1+ i)))
+                                                                                       (nth i dat401--prompts)))
+                                                   (number-sequence 0 (1- (length dat401--prompts)))))
     ;; DAT401_E2E_JUMP="Step 7 · ...": what C-F12 does, fast-forward there
     ;; from the start, then run from that step as usual.
     ;; With DAT401_E2E_COLD, jump without running the steps before (the
@@ -81,18 +86,22 @@
                (with-temp-file (expand-file-name "progress.txt" out)
                  (insert (format "%d %S\n" n step)))
                (when (and (string-match-p "dat401-quit-agent" (format "%S" step))
-                          (get-buffer (dat401--buffer-name 'claude)))
-                 (write-region (concat (dat401--pane-text 'claude) "\n") nil
+                          dat401--current-agent
+                          (get-buffer (dat401--buffer-name dat401--current-agent)))
+                 (write-region (concat (dat401--pane-text dat401--current-agent) "\n") nil
                                (expand-file-name "agent.txt" out) t 'silent))
                (demo-it--execute-step step)
-               ;; What's highlighted in pane A after this step.
-               (when (get-buffer (dat401--buffer-name 'a))
-                 (let ((marked (with-current-buffer (dat401--buffer-name 'a)
-                                 (mapcar (lambda (o) (buffer-substring-no-properties
-                                                      (overlay-start o) (overlay-end o)))
-                                         dat401--mark-overlays))))
-                   (write-region (format "%d %S\n" n marked) nil
-                                 (expand-file-name "marks.txt" out) t 'silent)))
+               ;; What's highlighted in pane A after this step (and in the
+               ;; Regions' panes, in region-marks.txt).
+               (dolist (p (cons 'a dat401-regions))
+                 (when (get-buffer (dat401--buffer-name p))
+                   (let ((marked (with-current-buffer (dat401--buffer-name p)
+                                   (mapcar (lambda (o) (buffer-substring-no-properties
+                                                        (overlay-start o) (overlay-end o)))
+                                           dat401--mark-overlays))))
+                     (write-region (if (eq p 'a) (format "%d %S\n" n marked) (format "%d %s %S\n" n p marked))
+                                   nil (expand-file-name (if (eq p 'a) "marks.txt" "region-marks.txt") out)
+                                   t 'silent))))
                ;; The CDC viewer needs a moment to attach (it reads from the
                ;; latest position) before anything is inserted.
                (when (string-match-p "events/target/release/events" (format "%S" step))

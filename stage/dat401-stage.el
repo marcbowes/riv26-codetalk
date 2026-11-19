@@ -230,7 +230,7 @@ A Region's pane gets that Region and no PGHOST: it pastes its own."
   "The layout that shows PANES. The first is the one just asked for: a shell
 asked for beside the events viewer replaces it."
   (let ((want (car panes)))
-    (cond ((equal panes '(claude)) '(claude))
+    (cond ((and (null (cdr panes)) (dat401--agent-pane-p (car panes))) panes)
           ((memq 'load panes) (if (memq 'shell panes) '(load shell) '(load)))
           ((cl-some #'dat401--region-pane-p panes)
            (append dat401-regions (when (memq 'shell panes) '(shell))))
@@ -379,31 +379,89 @@ lines are highlighted; the lines between them are dimmed."
 
 (defvar dat401--before-agent nil "The layout to put back when the agent closes.")
 
+(defvar dat401--prompts nil
+  "The talk's prompts, in order (dat401-talk.el sets it). Each gets its own
+agent pane, `claude-1', `claude-2'..., started by `dat401-start'.")
+
+(defvar dat401--current-agent nil "The agent pane on screen, if any.")
+
+(defvar-local dat401--agent-prompt nil "In an agent pane: the prompt pasted into it.")
+
+(defun dat401--agent-pane-p (pane)
+  (and pane (symbolp pane) (string-prefix-p "claude" (symbol-name pane))))
+
+(defun dat401--one-line (text)
+  "TEXT as one line: an agent prompt must hold no newline (it would submit)."
+  (replace-regexp-in-string "[ \t]*\n[ \t\n]*" " " (string-trim text)))
+
+(defun dat401--agent-pane-for (text)
+  "The agent pane for prompt TEXT: `claude-N' for the talk's Nth prompt."
+  (let ((i (cl-position (dat401--one-line text) (mapcar #'dat401--one-line dat401--prompts)
+                        :test #'equal)))
+    (if i (intern (format "claude-%d" (1+ i))) 'claude)))
+
+(defun dat401--agent-ready-p (pane text)
+  "Is PANE's agent running with TEXT already in its prompt?"
+  (let ((buf (get-buffer (dat401--buffer-name pane))))
+    (and buf (equal (buffer-local-value 'dat401--agent-prompt buf) (dat401--one-line text)))))
+
+(defun dat401--start-agent (pane text)
+  "Show PANE full screen, start the agent in it, and paste TEXT into its
+prompt in one go. Nothing is submitted: no Enter, no newline."
+  (dat401-layout pane)
+  (dat401--ready pane)
+  (dat401--type-line pane dat401-agent-command)
+  (dat401--wait-for (lambda () (string-match-p dat401-agent-ready (dat401--pane-text pane))) 30)
+  (dat401--pause-for 0.6)
+  (dat401--send pane (dat401--one-line text) t)
+  (dat401--pause-for 0.5)
+  (with-current-buffer (dat401--pane pane)
+    (setq dat401--agent-prompt (dat401--one-line text))))
+
+(defun dat401--prepare-agents ()
+  "Start an agent pane for each of the talk's prompts, its prompt already in
+it, then put back what was on screen. `dat401-start' does this before the
+talk, so no agent has to start (or update) on stage. Each is shown while it
+starts: the terminal only draws what's on screen."
+  (let ((layout dat401--layout)
+        (dat401-typing-speed 0))
+    (cl-loop for text in dat401--prompts
+             for i from 1
+             for pane = (intern (format "claude-%d" i))
+             unless (dat401--agent-ready-p pane text)
+             do (dat401--start-agent pane text))
+    (apply #'dat401-layout (or layout '(a)))))
+
 (defun dat401-agent (text)
-  "Start the agent (Claude Code) full screen, with TEXT already in its prompt:
-pasted in one go, so you can narrate it rather than wait for it. It's never
-submitted: no Enter and no newline is sent (paragraphs are joined), and
-`dat401-quit-agent' closes it."
+  "Show the agent (Claude Code) full screen with prompt TEXT already in it,
+so you can narrate it. `dat401-start' started it; if it isn't running, it's
+started now. It's never submitted, and `dat401-quit-agent' closes it."
   (unless dat401--fast
     (dat401-unhighlight)
-    (setq dat401--hurry nil
-          dat401--before-agent (or (remq 'view (remq 'claude dat401--layout)) '(a)))
-    (dat401-layout 'claude)
-    (dat401--ready 'claude)
-    (dat401--type-line 'claude dat401-agent-command)
-    (dat401--wait-for (lambda () (string-match-p dat401-agent-ready (dat401--pane-text 'claude))) 30)
-    (dat401--pause-for 0.6)
-    (dat401--send 'claude (replace-regexp-in-string "[ \t]*\n[ \t\n]*" " " (string-trim text)) t)
+    (let ((pane (dat401--agent-pane-for text)))
+      (setq dat401--hurry nil
+            dat401--before-agent (or (cl-remove-if (lambda (p) (or (eq p 'view) (dat401--agent-pane-p p)))
+                                                   dat401--layout)
+                                     '(a))
+            dat401--current-agent pane)
+      (if (dat401--agent-ready-p pane text)
+          (progn
+            (dat401-layout pane)
+            ;; The terminal drew it last while it was on screen; draw it now.
+            (when (and (dat401--ghostel-p) (fboundp 'ghostel--redraw-now))
+              (ghostel--redraw-now (dat401--pane pane) t)))
+        (dat401--start-agent pane text)))
     (setq dat401--hurry nil)))
 
 (defun dat401-quit-agent ()
   "Close the agent without submitting anything: put back what was on screen
 first, then end the agent, quietly."
-  (when (memq 'claude dat401--layout)
-    (apply #'dat401-layout (or dat401--before-agent (remq 'claude dat401--layout) '(a))))
-  (setq dat401--before-agent nil)
-  (when-let* ((buf (get-buffer (dat401--buffer-name 'claude))))
-    (ignore-errors (dat401--kill-terminal buf))))
+  (let ((pane (or dat401--current-agent 'claude)))
+    (when (memq pane dat401--layout)
+      (apply #'dat401-layout (or dat401--before-agent (remq pane dat401--layout) '(a))))
+    (setq dat401--before-agent nil dat401--current-agent nil)
+    (when-let* ((buf (get-buffer (dat401--buffer-name pane))))
+      (ignore-errors (dat401--kill-terminal buf)))))
 
 (defun dat401-cue (what)
   "Remind the presenter of a move only they can make (WHAT: \"browser\", a
@@ -485,6 +543,7 @@ before it is done. The clicker can't follow focus out of Emacs."
 
 (defconst dat401--scraped
   '(("fis-experiment-id" . "\\b\\(EXP[A-Za-z0-9]\\{8,\\}\\)\\b")
+    ("post-id" . "\\b\\([0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}\\)\\b")
     ("kinesis-stream-arn" . "\"StreamARN\": \"\\([^\"\n]+\\)\"")
     ("cdc-role-arn" . "\"\\(arn:aws:iam::[0-9]+:role/[^\"\n]+\\)\"")
     ("cdc-stream-id" . "\"streamIdentifier\": \"\\([a-z0-9]\\{26\\}\\)\""))
@@ -622,6 +681,7 @@ mark's regexp, matched as if the terminal hadn't wrapped long lines."
     ("filter" . "\\(Filter: [^\n]+\\)\n *\\(Rows Removed by Filter: [0-9]+\\)")
     ("cond" . "\\(Index Cond: [^\n]+\\)")
     ("time" . "\\(Execution Time: [0-9.]+ ms\\)")
+    ("region" . "PGHOST=[a-z0-9]+\\.dsql\\.\\([a-z]+-[a-z]+-[0-9]\\)\\.on\\.aws")
     ("dpu" . "\\(Total: [0-9.]+ DPU\\)"))
   "Parts of an EXPLAIN ANALYZE plan to highlight by name. Anything else is a
 JSON field.")
@@ -809,6 +869,7 @@ template or experiment id, a URL?"
   (let ((case-fold-search nil))
     (or (string-match-p "\\`[a-z0-9]\\{20,\\}\\'" value)
         (string-match-p "\\`EX[PT][A-Za-z0-9]\\{8,\\}\\'" value)
+        (string-match-p "\\`[0-9a-f]\\{8\\}-[0-9a-f-]\\{27\\}\\'" value)
         (string-match-p "\\`https?://" value))))
 
 (defun dat401--wrap-tolerant (s)
@@ -1140,6 +1201,8 @@ the step starts from the state it expects (a cluster, psql, data...)."
   (dat401--big-font t)
   (setq demo-it--start-single-window nil)
   (dat401-layout 'a)
+  (message "DAT401: starting Claude Code for the talk's %d prompts..." (length dat401--prompts))
+  (dat401--prepare-agents)
   (demo-it-start nil t)
   (message "DAT401: F12 / PgDn runs the next step, C-F12 jumps, any key finishes typing"))
 
@@ -1156,12 +1219,14 @@ placeholder values like the cluster endpoint. The next `dat401-start' starts
 clean."
   (interactive)
   (ignore-errors (dat401-stop))
-  (dolist (pane (append (mapcar #'car dat401--pane-titles) dat401-regions))
+  (dolist (pane (append (mapcar #'car dat401--pane-titles) dat401-regions
+                        (mapcar (lambda (i) (intern (format "claude-%d" i)))
+                                (number-sequence 1 (max 1 (length dat401--prompts))))))
     (dat401--kill-terminal (get-buffer (dat401--buffer-name pane))))
   (mapc (lambda (b) (when (buffer-live-p b) (kill-buffer b))) dat401--views)
   (clrhash dat401--vars)
   (setq dat401--views nil dat401--marks nil dat401--layout nil dat401--section ""
-        dat401--stale-endpoints nil dat401--before-agent nil)
+        dat401--stale-endpoints nil dat401--before-agent nil dat401--current-agent nil)
   (message "DAT401: reset. M-x dat401-start to begin again"))
 
 (provide 'dat401-stage)

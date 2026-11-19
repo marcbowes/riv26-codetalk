@@ -48,6 +48,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 OUT = os.path.join(HERE, "dat401-talk.el")
+REX_OUT = os.path.join(HERE, "rex", "talk.lua")
 
 JOB_ID_LITERAL = re.compile(r"(wait_for_job\(')[a-z0-9]{26}('\))")
 
@@ -303,6 +304,12 @@ def step_forms(step):
     return forms
 
 
+def talk_prompts(talk):
+    """Every PROMPT in the talk's steps, in order."""
+    return [b.get("command") or "" for part in talk["parts"] if part["talk"]
+            for s in part["steps"] if s["talk"] for b in s["beats"] if b["kind"] == "PROMPT"]
+
+
 def generate(talk):
     lines = [
         ";;; dat401-talk.el --- The DAT401 demo-it steps  -*- lexical-binding: t; -*-",
@@ -356,6 +363,11 @@ def generate(talk):
     lines.append("(setq dat401--steps-index")
     lines.append("      '(" + "\n        ".join("(%s . %d)" % (el(t), n) for t, n in index) + "))")
     lines.append("")
+    # The agent panes are started, prompts and all, when the stage starts.
+    lines.append(";; The prompts, in order: each gets its own Claude Code pane at `dat401-start'.")
+    lines.append("(setq dat401--prompts")
+    lines.append("      (list " + "\n            ".join(el(t) for t in talk_prompts(talk)) + "))")
+    lines.append("")
     lines.append("(demo-it-create")
     lines.append(" :advanced-mode")
     for n, (comment, form) in enumerate(steps, 1):
@@ -367,6 +379,190 @@ def generate(talk):
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# The same talk for the Rex stage (stage/rex): each F12 is a list of ops that
+# stage/rex/dat401.lua performs. The beats are read exactly as for Emacs, but
+# highlights are left to the presenter (the mouse), so they're not presses.
+
+def lua(s):
+    """A Lua string literal. JSON's escapes are Lua's, apart from \\u, which
+    ensure_ascii=False never needs for printable text."""
+    out = json.dumps(s, ensure_ascii=False)
+    if "\\u" in out:
+        raise SystemExit("can't write %r as a Lua string" % s)
+    return out
+
+
+def lua_value(v):
+    if isinstance(v, str):
+        return lua(v)
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, (list, tuple)):
+        return "{" + ", ".join(lua_value(x) for x in v) + "}"
+    raise TypeError(v)
+
+
+def lua_op(op):
+    keys = ["op"] + sorted(k for k in op if k != "op")
+    return "{" + ", ".join("%s = %s" % ("[\"from\"]" if k == "from" else k, lua_value(op[k])) for k in keys) + "}"
+
+
+def describe_op(op):
+    o = op["op"]
+    if o in ("run",):
+        return "%s in %s: %s" % (o, "+".join(op["panes"]), op["text"].splitlines()[0][:60])
+    if o in ("paste", "recall"):
+        return "%s in %s: %s" % (o, op["pane"], op["text"].splitlines()[0][:60])
+    if o == "copy_into":
+        return "copy %s -> %s" % (op["from"], op["to"])
+    if o in ("layout",):
+        return "layout %s" % " ".join(op["panes"])
+    if o in ("show", "open", "close"):
+        return "%s %s" % (o, op["pane"])
+    if o == "section":
+        return op["title"]
+    if o == "cue":
+        return "cue %s" % op["text"]
+    return o
+
+
+def rex_presses(step):
+    """One talk step's F12 presses for Rex: each a list of ops."""
+    presses = []
+    merge = []      # ops that ride along with the next press (close pane)
+
+    def add(ops):
+        if merge:
+            ops = merge + ops
+            del merge[:]
+        presses.append(ops)
+
+    for b in step["beats"]:
+        kind = b["kind"]
+        if kind in ("RUN", "RACE"):
+            lang = (b["elems"][0].get("lang") or "sql") if b["elems"] and b["elems"][0].get("kind") == "code" else "sql"
+            if kind == "RACE":
+                lang = "sql"
+            text = clean_command(b.get("command") or "", lang)
+            if not text:
+                continue
+            panes = panes_for(b.get("target"), text)
+            recall = re.search(r"\brecall\b:?\s*(.*)$", b.get("target") or "")
+            if recall:
+                search = lowercase_sql(recall.group(1).strip()) or text.splitlines()[-1].rstrip(";")[-12:]
+                add([{"op": "recall", "pane": panes[0], "text": text, "search": search}])
+            elif len(panes) == 2:
+                first, second = panes
+                add([{"op": "run", "panes": [first], "text": text}])
+                add([{"op": "copy_into", "from": first, "to": second, "text": text}])
+            elif "paste" in (b.get("target") or "").lower().split():
+                add([{"op": "paste", "pane": panes[0], "text": text}])
+            else:
+                add([{"op": "run", "panes": panes, "text": text}])
+        elif kind == "PROMPT":
+            add([{"op": "agent", "text": b.get("command") or ""}])
+            add([{"op": "quit_agent"}])
+        elif kind == "CUE":
+            words = b["target"].split()
+            if (words and words[0] == "highlight") or words == ["clear"]:
+                continue        # the presenter highlights with the mouse
+            if len(words) >= 2 and words[0] == "cue":
+                cue = {"op": "cue", "text": " ".join(words[1:])}
+                if presses:
+                    presses[-1].append(cue)     # shown once the command before it is done
+                else:
+                    add([cue])                  # a press of its own
+                continue
+            if len(words) == 3 and words[0] in ("open", "close") and words[1] == "pane" \
+                    and words[2].lower() in PANES:
+                op = {"op": words[0], "pane": words[2].lower()}
+                if words[0] == "close":
+                    merge.append(op)
+                else:
+                    add([op])
+                continue
+            raise SystemExit("TALK.md line %s: unknown stage direction %r" % (b["line"], b["target"]))
+        elif kind == "SHOW":
+            path = b["target"]
+            try:
+                with open(os.path.join(REPO, path)) as f:
+                    ranges = excerpt_ranges(b["elems"][0]["text"], f.read())
+            except (OSError, ExcerptError) as e:
+                raise SystemExit("TALK.md line %s: excerpt of %s: %s" % (b["line"], path, e))
+            add([{"op": "code", "path": path, "ranges": [list(r) for r in ranges]}])
+    for op in merge:            # a close with nothing after it
+        presses.append([op])
+    return presses
+
+
+def first_pane(ops):
+    for op in ops:
+        if op["op"] == "close":
+            continue
+        if op["op"] == "agent":
+            return "claude"
+        if "panes" in op:
+            return op["panes"][0]
+        if "pane" in op:
+            return op["pane"]
+        if "from" in op:
+            return op["from"]
+        return None
+    return None
+
+
+def generate_rex(talk):
+    presses = []    # lists of ops
+    index = []      # (title, 1-based press number)
+    first = True
+    for part in talk["parts"]:
+        if not part["talk"]:
+            continue
+        for s in part["steps"]:
+            if not s["talk"]:
+                continue
+            title = s["title"] if not s.get("label") else "%s · %s" % (s["label"], s["title"])
+            ps = rex_presses(s)
+            if first:
+                # The first press sets the scene, as demo-it's first step does.
+                presses.append([{"op": "section", "title": title}, {"op": "layout", "panes": ["a"]}])
+                index.append((title, len(presses)))
+                first = False
+            if not ps:
+                continue
+            index.append((title, len(presses) + 1))
+            p = first_pane(ps[0])
+            if p == "shell":
+                scene = [{"op": "show", "pane": "shell"}]
+            elif p == "claude":
+                scene = []
+            else:
+                scene = [{"op": "layout", "panes": layout_for([p]) if p else ["a"]}]
+            presses.append([{"op": "section", "title": title}] + scene + ps[0])
+            presses.extend(ps[1:])
+    lines = [
+        "-- talk.lua: the DAT401 talk for the Rex stage. One entry per F12 press.",
+        "--",
+        "-- GENERATED by stage/generate.py from TALK.md. Don't edit: change TALK.md and",
+        "-- run `python3 stage/generate.py`.",
+        "",
+        "return {",
+        "  index = {",
+    ]
+    lines += ["    {%s, %d}," % (lua(t), n) for t, n in index]
+    lines += ["  },", "  -- Each prompt gets its own Claude Code pane at cmd=start.", "  prompts = {"]
+    lines += ["    %s," % lua(t) for t in talk_prompts(talk)]
+    lines += ["  },", "  presses = {"]
+    for n, ops in enumerate(presses, 1):
+        lines.append("    -- %d. %s" % (n, "; ".join(describe_op(o) for o in ops).replace("\n", " ")))
+        lines.append("    {" + ", ".join(lua_op(o) for o in ops) + "},")
+    lines += ["  },", "}", ""]
+    return "\n".join(lines)
+
+
 def load_talk():
     out = subprocess.run([sys.executable, os.path.join(REPO, "speaker", "speaker"), "--json",
                           os.path.join(REPO, "TALK.md")],
@@ -375,17 +571,25 @@ def load_talk():
 
 
 def main(argv):
-    text = generate(load_talk())
+    talk = load_talk()
+    outputs = [(OUT, generate(talk), lambda t: "%d steps" % t.count("\n ;; ")),
+               (REX_OUT, generate_rex(talk), lambda t: "%d presses" % t.count("\n    -- "))]
     if "--check" in argv:
-        current = open(OUT).read() if os.path.exists(OUT) else ""
-        if current != text:
-            print("stage/dat401-talk.el is out of date: run python3 stage/generate.py")
+        stale = []
+        for path, text, _ in outputs:
+            current = open(path).read() if os.path.exists(path) else ""
+            if current != text:
+                stale.append(os.path.relpath(path, REPO))
+        if stale:
+            print("%s out of date: run python3 stage/generate.py" % " and ".join(stale))
             return 1
-        print("stage/dat401-talk.el is up to date")
+        print("stage/dat401-talk.el and stage/rex/talk.lua are up to date")
         return 0
-    with open(OUT, "w") as f:
-        f.write(text)
-    print("wrote %s (%d steps)" % (os.path.relpath(OUT, REPO), text.count("\n ;; ")))
+    for path, text, count in outputs:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+        print("wrote %s (%s)" % (os.path.relpath(path, REPO), count(text)))
     return 0
 
 

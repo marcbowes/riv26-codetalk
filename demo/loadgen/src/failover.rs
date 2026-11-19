@@ -7,9 +7,12 @@
 //! connections, so its API answers 503 at once). The total stays at the target
 //! while the healthy Region takes the lot.
 //!
-//! Only server-side failures count: 5xx, timeouts and connection errors. 4xx
-//! is the request's fault, and throttling (429) has its own back-off in
-//! `control`.
+//! What counts: 5xx, timeouts, connection errors and throttling (429). 4xx is
+//! the request's fault. A little throttling is `control`'s back-off; a Region
+//! answering mostly 429 is as gone as one answering 503. (When FIS makes a
+//! Region's DSQL refuse connections, every request there tries a new one, and
+//! the refused attempts use up the cluster's 100 new connections a second: most
+//! answers are 429 "rate exceeded", the rest 503.)
 //!
 //! States, per Region, judged once a second on that second's responses:
 //! - **Up**: keeps all its own traffic, and takes rerouted traffic.
@@ -20,8 +23,10 @@
 //! - **Returning**: `UP_SECONDS` seconds in a row of probes at least
 //!   `UP_OK_FRACTION` OK (with at least `UP_MIN_COMPLETED` each). Its share
 //!   ramps from the probe share back to all of it over `RETURN_SECS`, so its
-//!   Lambda environments reconnect to DSQL a few at a time, not all at once.
-//!   Failing again sends it straight back to Down.
+//!   Lambda environments reconnect to DSQL a few at a time (well under 100 a
+//!   second at 10,000 req/s), not all at once. Hard failures (5xx, timeouts,
+//!   connection errors) send it straight back to Down; throttling on the way
+//!   back is left to `control`'s back-off.
 
 use std::sync::Mutex;
 use std::sync::atomic::Ordering::Relaxed;
@@ -35,7 +40,7 @@ pub const DOWN_FRACTION: f64 = 0.5;
 /// ...out of at least this many.
 pub const DOWN_MIN_COMPLETED: u64 = 10;
 /// While down, this share of the Region's own traffic still goes to it, as probes...
-pub const PROBE_SHARE: f64 = 0.01;
+pub const PROBE_SHARE: f64 = 0.002;
 /// ...and at least this many requests a second, so a second nearly always
 /// has the `UP_MIN_COMPLETED` probes it needs to count.
 pub const PROBE_MIN_RATE: f64 = 5.0;
@@ -46,7 +51,7 @@ pub const UP_MIN_COMPLETED: u64 = 2;
 /// Good seconds in a row before traffic starts moving back.
 pub const UP_SECONDS: u32 = 3;
 /// How long the move back takes, from the probe share to all of it.
-pub const RETURN_SECS: f64 = 10.0;
+pub const RETURN_SECS: f64 = 30.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum State {
@@ -67,6 +72,8 @@ pub enum Change {
         failed: u64,
         completed: u64,
         worst: Class,
+        /// Some failures were throttles (429) and some weren't.
+        mixed: bool,
     },
     /// Probes are healthy again; traffic starts moving back.
     Returning,
@@ -107,11 +114,19 @@ impl Health {
     /// Feed one second of this Region's results (seconds since start `t`).
     pub fn observe(&mut self, t: f64, w: &Interval) -> Option<Change> {
         let completed = w.total();
-        let failed: u64 = FAILURES.iter().map(|&c| w.count(c)).sum();
-        let failing =
-            completed >= DOWN_MIN_COMPLETED && failed as f64 >= completed as f64 * DOWN_FRACTION;
+        let count = |cs: &[Class]| cs.iter().map(|&c| w.count(c)).sum::<u64>();
+        let failed = count(&FAILURES);
+        let hard = count(&HARD_FAILURES);
+        let enough = completed >= DOWN_MIN_COMPLETED;
+        let failing = enough && failed as f64 >= completed as f64 * DOWN_FRACTION;
+        let failing_hard = enough && hard as f64 >= completed as f64 * DOWN_FRACTION;
+        let down_now = match self.state {
+            State::Up => failing,
+            State::Returning { .. } => failing_hard,
+            State::Down => false,
+        };
         match self.state {
-            State::Up | State::Returning { .. } if failing => {
+            State::Up | State::Returning { .. } if down_now => {
                 self.state = State::Down;
                 self.good_streak = 0;
                 self.downs += 1;
@@ -120,10 +135,12 @@ impl Health {
                     .copied()
                     .max_by_key(|&c| w.count(c))
                     .unwrap_or(Class::Server5xx);
+                let throttled = w.count(Class::Throttled);
                 Some(Change::Down {
                     failed,
                     completed,
                     worst,
+                    mixed: throttled > 0 && throttled < failed,
                 })
             }
             State::Down => {
@@ -165,7 +182,10 @@ impl Health {
     }
 }
 
-const FAILURES: [Class; 3] = [Class::Server5xx, Class::Timeout, Class::Connect];
+/// What makes a Region down. `HARD_FAILURES`, without throttling, is what
+/// sends a returning Region back.
+const FAILURES: [Class; 4] = [Class::Server5xx, Class::Throttled, Class::Timeout, Class::Connect];
+const HARD_FAILURES: [Class; 3] = [Class::Server5xx, Class::Timeout, Class::Connect];
 
 fn probe_share(rate: f64) -> f64 {
     if rate <= 0.0 {
@@ -312,11 +332,14 @@ pub fn describe(labels: &[String], t: usize, change: &Change, receivers: &[usize
             failed,
             completed,
             worst,
+            mixed,
         } => {
             let pct = (*failed as f64 / (*completed).max(1) as f64 * 100.0).round();
-            let what = match worst {
-                Class::Timeout => "timing out",
-                Class::Connect => "failing to connect",
+            let what = match (worst, mixed) {
+                (Class::Server5xx | Class::Throttled, true) => "failing (5xx and 429)",
+                (Class::Throttled, false) => "failing (429)",
+                (Class::Timeout, _) => "timing out",
+                (Class::Connect, _) => "failing to connect",
                 _ => "failing (5xx)",
             };
             let head = format!("{label}: {pct}% of {} requests {what}", fmt_int(*completed));
@@ -365,7 +388,8 @@ mod tests {
             Some(Change::Down {
                 failed: 90,
                 completed: 100,
-                worst: Class::Server5xx
+                worst: Class::Server5xx,
+                mixed: false,
             })
         );
         assert_eq!(h.state(), State::Down);
@@ -381,13 +405,12 @@ mod tests {
     }
 
     #[test]
-    fn throttles_and_4xx_are_not_failures() {
+    fn failures_and_throttles_count_4xx_doesnt() {
         let mut h = Health::new();
-        assert_eq!(h.observe(1.0, &second(0, 100, Class::Throttled)), None);
-        assert_eq!(h.observe(2.0, &second(0, 100, Class::Client4xx)), None);
+        assert_eq!(h.observe(1.0, &second(0, 100, Class::Client4xx)), None);
         assert_eq!(h.state(), State::Up);
         // Timeouts and connection errors count, and name the failure.
-        let c = h.observe(3.0, &second(2, 30, Class::Timeout));
+        let c = h.observe(2.0, &second(2, 30, Class::Timeout));
         assert!(matches!(
             c,
             Some(Change::Down {
@@ -395,13 +418,41 @@ mod tests {
                 ..
             })
         ));
+        // A Region answering mostly 429 is down too (FIS: refused attempts use
+        // up DSQL's connection rate).
+        let mut h = Health::new();
+        let c = h.observe(1.0, &second(5, 95, Class::Throttled));
+        assert!(matches!(
+            c,
+            Some(Change::Down {
+                worst: Class::Throttled,
+                mixed: false,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn throttling_on_the_way_back_is_left_to_the_back_off() {
+        let mut h = Health::new();
+        h.observe(1.0, &second(0, 100, Class::Server5xx));
+        for t in 2..5 {
+            h.observe(t as f64, &second(10, 0, Class::Server5xx));
+        }
+        assert!(matches!(h.state(), State::Returning { .. }));
+        // Reconnecting Lambdas hit DSQL's connection rate: 429s don't send it back...
+        assert_eq!(h.observe(6.0, &second(20, 80, Class::Throttled)), None);
+        assert!(matches!(h.state(), State::Returning { .. }));
+        // ...but failures do.
+        assert!(h.observe(7.0, &second(20, 80, Class::Server5xx)).is_some());
+        assert_eq!(h.state(), State::Down);
     }
 
     #[test]
     fn probes_while_down() {
         let mut h = Health::new();
         h.observe(1.0, &second(0, 100, Class::Server5xx));
-        assert!(close(h.keep(1.0, 10_000.0), 0.01));
+        assert!(close(h.keep(1.0, 10_000.0), PROBE_SHARE));
         // At low rates the probe floor wins: 5 of 50 req/s.
         assert!(close(h.keep(1.0, 50.0), 0.1));
         assert!(close(h.keep(1.0, 1.0), 1.0));
@@ -429,14 +480,16 @@ mod tests {
         assert!(h.receives());
 
         let rate = 10_000.0;
-        assert!(close(h.keep(8.0, rate), 0.01));
-        assert!(close(h.keep(13.0, rate), 0.505));
-        assert!(close(h.keep(18.0, rate), 1.0));
-        assert!(close(h.keep(30.0, rate), 1.0));
+        let half = 8.0 + RETURN_SECS / 2.0;
+        let end = 8.0 + RETURN_SECS;
+        assert!(close(h.keep(8.0, rate), PROBE_SHARE));
+        assert!(close(h.keep(half, rate), PROBE_SHARE + (1.0 - PROBE_SHARE) / 2.0));
+        assert!(close(h.keep(end, rate), 1.0));
+        assert!(close(h.keep(end + 12.0, rate), 1.0));
         // Fully back after RETURN_SECS.
-        assert_eq!(h.observe(17.0, &second(100, 0, Class::Ok)), None);
+        assert_eq!(h.observe(end - 1.0, &second(100, 0, Class::Ok)), None);
         assert!(matches!(h.state(), State::Returning { .. }));
-        assert_eq!(h.observe(18.0, &second(100, 0, Class::Ok)), None);
+        assert_eq!(h.observe(end, &second(100, 0, Class::Ok)), None);
         assert_eq!(h.state(), State::Up);
     }
 
@@ -485,11 +538,12 @@ mod tests {
         f.publish(1.0, &rates);
         assert_eq!(f.receivers_of(1), vec![0]);
         let to_0 = (0..10_000).filter(|_| f.route(1) == 0).count();
-        // Keeps 1% (at least 5 req/s of 1,000 = 0.5%): about 9,900 rerouted.
-        assert!((9_800..=9_970).contains(&to_0), "{to_0}");
+        // Keeps the probe floor, 5 req/s of 1,000 (0.5%, more than PROBE_SHARE):
+        // about 9,950 of 10,000 rerouted.
+        assert!((9_900..=9_990).contains(&to_0), "{to_0}");
         assert!((0..1000).all(|_| f.route(0) == 0));
         let e = f.effective(&rates);
-        assert!(close(e[0], 1990.0) && close(e[1], 10.0), "{e:?}");
+        assert!(close(e[0], 1995.0) && close(e[1], 5.0), "{e:?}");
 
         // Both down: nobody reroutes.
         f.observe(0, 1.0, &second(0, 100, Class::Server5xx));
@@ -514,7 +568,18 @@ mod tests {
             failed: 970,
             completed: 1000,
             worst: Class::Server5xx,
+            mixed: false,
         };
+        let mixed = Change::Down {
+            failed: 970,
+            completed: 1000,
+            worst: Class::Throttled,
+            mixed: true,
+        };
+        assert_eq!(
+            describe(&labels, 1, &mixed, &[0]),
+            "us-east-1: 97% of 1,000 requests failing (5xx and 429); sending its traffic to us-west-2"
+        );
         assert_eq!(
             describe(&labels, 1, &down, &[0]),
             "us-east-1: 97% of 1,000 requests failing (5xx); sending its traffic to us-west-2"
@@ -525,7 +590,7 @@ mod tests {
         );
         assert_eq!(
             describe(&labels, 1, &Change::Returning, &[0]),
-            "us-east-1 answering again; moving its traffic back over 10 s"
+            "us-east-1 answering again; moving its traffic back over 30 s"
         );
     }
 }

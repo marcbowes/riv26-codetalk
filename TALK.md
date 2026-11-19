@@ -860,14 +860,11 @@ database, and keeps going when one of them goes away.
 
 ### Multi-Region, in a minute · 32:00–33:00
 
-Back to the console:
+<!-- stage: cue console: us-west-2.console.aws.amazon.com/dsql/create-cluster/home -->
 
-```sh
-open https://us-west-2.console.aws.amazon.com/dsql/create-cluster/home
-```
-
-It opens on **Create cluster**. Choose **Multi-Region**: it's the same page as
-before, with two more choices:
+Back to the console, on
+[Create cluster](https://us-west-2.console.aws.amazon.com/dsql/create-cluster/home).
+Choose **Multi-Region**: it's the same page as before, with two more choices:
 - the second Region that takes reads and writes: us-east-1;
 - a **witness** Region: us-east-2. It stores a limited window of encrypted
   transaction logs, which keeps the cluster durable and available if a Region
@@ -884,8 +881,8 @@ earlier, with the same schema we built today, and put the blog on it.
 <details>
 <summary>Presenter notes</summary>
 
-- F12 types the `open` in the shell, and the browser comes forward on a new
-  tab. ⌘-Tab back to Emacs for the next F12.
+- F12 only shows the console's address at the bottom of Emacs, as a reminder:
+  nothing is typed. ⌘-Tab to the browser, then back to Emacs for the next F12.
 - Create really makes two clusters, one in each Region. Delete them afterwards
   (see [Cleaning up](#cleaning-up)), or stop before Create: the point is the
   choices on the page.
@@ -911,9 +908,11 @@ conflict, as in step 6.
 <details>
 <summary>Presenter notes</summary>
 
-- F12 opens Claude Code full screen with the whole prompt already in it.
-  Nothing is typed and nothing is submitted. **Don't press Enter while it's
-  on screen**: it's in auto mode. The next F12 closes it.
+- Both Claude Code panes start in the background when the stage starts
+  (`dat401-start`), each with its prompt already in it, so there's no
+  start-up (or update) to wait for. F12 just shows this one, full screen;
+  nothing is submitted. **Don't press Enter while it's on screen**: it's in
+  auto mode. The next F12 closes it.
 - The deployed API is [`demo/api`](demo/api): Hono and the
   [DSQL adapter for Drizzle](https://github.com/awslabs/aurora-dsql-orms/tree/main/node/drizzle),
   behind a Lambda function URL in each Region.
@@ -929,30 +928,39 @@ export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --region us-w
 psql
 ```
 
+<!-- stage: highlight region -->
+
 ```sh pane us-east-1 paste
 export PGHOST=<us-east-1-endpoint> PGUSER=admin PGDATABASE=postgres PGSSLMODE=require
 export PGPASSWORD="$(aws dsql generate-db-connect-admin-auth-token --region us-east-1 --hostname $PGHOST --expires-in 3600)"
 psql
 ```
 
-The same data on both sides:
+<!-- stage: highlight region -->
+
+The same data on both sides, and timed:
 
 ```sql both regions
+\timing on
 SELECT count(*) FROM posts;
-SELECT title FROM posts ORDER BY created_at DESC LIMIT 1;
+SELECT id, title FROM posts ORDER BY created_at DESC LIMIT 1;
+\timing off
 ```
 
-Change something in us-west-2:
+us-west-2 answers sooner: it's nearer to Las Vegas than us-east-1 is. The
+database work is the same; the difference is the network between this laptop
+and each Region.
+
+Change that post's title in us-west-2:
 
 ```sql pane us-west-2
-UPDATE posts SET title = title || ' (live from re:Invent)'
-WHERE id = (SELECT id FROM posts ORDER BY created_at DESC LIMIT 1);
+UPDATE posts SET title = title || ' (live from re:Invent)' WHERE id = '<post-id>';
 ```
 
 And read it in us-east-1:
 
 ```sql pane us-east-1 recall: desc limit 1
-SELECT title FROM posts ORDER BY created_at DESC LIMIT 1;
+SELECT id, title FROM posts ORDER BY created_at DESC LIMIT 1;
 ```
 
 It's there on the very next read. The commit in us-west-2 waited for
@@ -966,7 +974,9 @@ us-east-1, so there's no replication lag to wait out.
 <summary>Presenter notes</summary>
 
 - The endpoints come from `demo/outputs.json`. Each pane pastes its exports
-  and starts psql in one go.
+  and starts psql in one go; the next F12 highlights the Region in its
+  `PGHOST`.
+- The post's id is copied from us-west-2's output into the `UPDATE`.
 - `demo/preflight.sh` takes the ` (live from re:Invent)` back off the title,
   so every rehearsal starts from the same page.
 </details>
@@ -1111,7 +1121,8 @@ aws fis stop-experiment --region us-east-1 --id <fis-experiment-id> --query expe
 <!-- stage: cue browser -->
 
 New connections work at once. The spinner clears, and the load generator moves
-us-east-1's traffic back over about ten seconds.
+us-east-1's traffic back over 30 seconds, so its Lambdas reconnect a few at a
+time.
 
 > **★ DSQL difference: losing a Region is a routing problem, not a database
 > one.** Both endpoints were read-write all along, so there's nothing to
@@ -1122,10 +1133,12 @@ us-east-1's traffic back over about ten seconds.
 <details>
 <summary>Presenter notes</summary>
 
+- **FIS takes about 20 seconds to bite** after `start-experiment`: nothing
+  changes on screen until then. Talk over it: what FIS is, what the action
+  does, what you expect to see.
 - The bottom 20% of the screen is a shell under the load generator. F12 types
   `start-experiment` there. The experiment id it prints is copied into
   `stop-experiment`.
-- Talk over the 20 seconds before it bites: what FIS is, what the action does.
 - After each FIS command, Emacs shows "→ browser": ⌘-Tab to the site, then back
   to Emacs for the next F12.
 - The template is the `Dat401-Fis-us-east-1` stack (`demo/deploy.sh` makes it).

@@ -140,17 +140,25 @@ which exercises multi-Region strong consistency: a 404 there would be a bug.
 With `--rps`, a Region whose API stops answering has its traffic sent to
 the healthy Regions instead, as a multi-Region client would. The total stays
 at the target. In the talk, an FIS experiment makes us-east-1's DSQL refuse
-connections, so its API answers 503 at once and us-west-2 takes everything.
+connections, so its API answers at once, and us-west-2 takes everything.
+Every request there tries a new connection, and the refused attempts use up
+the cluster's 100 new connections a second, so most answers are 429 ("rate
+exceeded") and the rest 503.
 
 - **Down.** Once a second, a Region counts as down if at least half of the
-  last second's responses (and at least 10) were 5xx, timeouts or connection
-  errors. 4xx and throttling don't count.
-- **Probing.** A down Region still gets 1% of its own traffic (at least
-  5 req/s) to notice when it's back. The rest goes to the Regions that are
+  last second's responses (and at least 10) were 5xx, 429s, timeouts or
+  connection errors. 4xx doesn't count, and a little throttling is the
+  back-off's business (above).
+- **Probing.** A down Region still gets 0.2% of its own traffic (at least
+  5 req/s) to notice when it's back. That's about 20 connection attempts a
+  second at 10,000 req/s, well inside the cluster's 100. The rest goes to the Regions that are
   up, spread evenly. If none is, nothing is rerouted.
 - **Back.** After 3 seconds in a row of probes at least 90% OK (at least two
-  each), its traffic moves back linearly over 10 s, so its Lambda
-  environments reconnect to DSQL a few at a time.
+  each), its traffic moves back linearly over 30 s, so its Lambda
+  environments reconnect to DSQL a few at a time: about 35 a second at
+  10,000 req/s, under the cluster's 100 new connections a second. On the way
+  back, 429s are left to the back-off; only 5xx, timeouts and connection
+  errors send it back down.
 - **On screen.** A down Region's name turns red and a returning one's yellow.
   `rate` is what each Region is actually sent after rerouting. The Events
   panel says when traffic moves and when it moves back. The `--plain` line
