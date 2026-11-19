@@ -5,6 +5,9 @@ The talk's terminal demos, run from Emacs with
 clicker's PgDn) runs the next command from [TALK.md](../TALK.md), typed into
 the right pane the way a person types. You talk; it types.
 
+The same talk also runs in the Rex terminal, with no Emacs setup: see
+[`rex/`](rex). Both are generated from TALK.md.
+
 It's meant to look live, not like a slideshow: there are no titles, no
 banners, nothing that says "step 3". Just terminals and files.
 

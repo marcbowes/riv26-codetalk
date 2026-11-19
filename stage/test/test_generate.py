@@ -140,6 +140,23 @@ class RealTalk(unittest.TestCase):
         self.assertEqual(out.count('(dat401-cue "browser")'), 2)
         self.assertNotIn("sdtn7gjobfeglgjbysgk3pog4i", out)  # rehearsal job id replaced
 
+    def test_rex_presses(self):
+        talk = generate.load_talk()
+        el = generate.generate(talk)
+        lua = generate.generate_rex(talk)
+        # Highlights are the presenter's (the mouse) in Rex: no presses for them.
+        self.assertNotIn('op = "highlight"', lua)
+        highlight_steps = el.count("\n (dat401-highlight ") + el.count("\n (dat401-unhighlight)")
+        self.assertEqual(lua.count("\n    -- "), el.count("\n ;; ") - highlight_steps)
+        # The console's address is a press of its own; the browser cues ride
+        # along with the FIS commands.
+        self.assertIn('{op = "cue", text = "console: us-west-2.console.aws.amazon.com/dsql/create-cluster/home"}', lua)
+        self.assertEqual(lua.count('{op = "cue", text = "browser"}'), 2)
+        # Both prompts are listed, for cmd=start to prepare.
+        self.assertEqual(len(generate.talk_prompts(talk)), 2)
+        self.assertEqual(lua.count('{op = "agent", '), 2)
+        self.assertNotIn("\\u", lua)       # Lua 5.1 has no \u escapes
+
     def test_generated_file_is_current(self):
         self.assertEqual(generate.main(["--check"]), 0)
 
