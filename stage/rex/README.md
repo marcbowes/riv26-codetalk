@@ -36,8 +36,11 @@ path, then run `rex config reload`:
 dofile(os.getenv("HOME") .. "/code/riv26-codetalk/stage/rex/init.lua")
 ```
 
-F12 and Page Down (a clicker's next) then run the next press, but only in the
-"DAT401 stage" session. Anywhere else they do what they always did.
+That line binds nothing until a stage is running. Rex has no per-session key
+bindings, so `cmd=start` reloads the config to add F12 and Page Down (a
+clicker's next), and `cmd=reset` reloads it again to take them away. While the
+stage runs, they act only in the "DAT401 stage" session: anywhere else they do
+what they always did.
 
 Also, as for the Emacs stage: `stage/setup-cdc-role.sh` (step 9's role), the
 finished app deployed (`demo/deploy.sh`), and `demo/preflight.sh` before the

@@ -1,13 +1,17 @@
 -- init.lua: F12, or a clicker's Page Down, runs the next press of the DAT401
--- stage in Rex, but only while you're in the "DAT401 stage" session. Anywhere
--- else the keys do what they always do. Load it from your own Rex config
--- (~/.config/rex/init.lua), with this repo's path:
+-- stage in Rex. Load it from your own Rex config (~/.config/rex/init.lua),
+-- with this repo's path:
 --
 --   dofile(os.getenv("HOME") .. "/code/riv26-codetalk/stage/rex/init.lua")
 --
--- then `rex config reload`. A press runs as its own `rex do` process, so a
--- long one (typing, waiting for psql) never holds up the server. A press made
--- while one is still typing makes it finish its typing at once.
+-- It binds nothing unless a stage is running: Rex has no per-session key
+-- bindings, so dat401.lua's cmd=start and cmd=reset reload the config, and
+-- the keys come and go with the stage. While it runs, they act only in the
+-- "DAT401 stage" session; anywhere else they do what they always do.
+--
+-- A press runs as its own `rex do` process, so a long one (typing, waiting for
+-- psql) never holds up the server. A press made while one is still typing
+-- makes it finish its typing at once.
 
 local here = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/[^/]*$")
 local runner = here .. "/dat401.lua"
@@ -22,6 +26,9 @@ local function stage_session()
   f:close()
   return ok and type(s) == "table" and s.session_id or nil
 end
+
+-- No stage, no keys.
+if not stage_session() then return end
 
 -- `rex` is on the PATH in Rex's own terminals; the server's is a fallback.
 local launch = [[
