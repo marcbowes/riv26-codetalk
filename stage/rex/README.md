@@ -25,7 +25,7 @@ What's different from Emacs:
 |---|---|
 | `dat401.lua` | The runtime: `rex do stage/rex/dat401.lua cmd=...` |
 | `talk.lua` | The presses, **generated** from TALK.md (`python3 stage/generate.py`). Don't edit it. |
-| `init.lua` | F12, for your Rex config |
+| `init.lua` | F12 and Page Down, for your Rex config |
 
 ## Setup (once)
 
@@ -37,9 +37,11 @@ dofile(os.getenv("HOME") .. "/code/riv26-codetalk/stage/rex/init.lua")
 ```
 
 That line binds nothing until a stage is running. Rex has no per-session key
-bindings, so `cmd=start` reloads the config to add F12, and `cmd=reset` reloads
-it again to take it away. While the stage runs, F12 acts only in the "DAT401
-stage" session: anywhere else it does what it always did.
+bindings, so `cmd=start` reloads the config to add F12 (fn-F12 on a Mac
+keyboard) and Page Down (a clicker's next), and `cmd=reset` reloads it again to
+take them away. While the stage runs, they act only in the "DAT401 stage"
+session: anywhere else they do what they always did. Each key press is logged
+in `~/.cache/dat401-rex/keys.log`.
 
 Also, as for the Emacs stage: `stage/setup-cdc-role.sh` (step 9's role), the
 finished app deployed (`demo/deploy.sh`), and `demo/preflight.sh` before the
@@ -61,7 +63,7 @@ already in it, so no agent starts (or updates) on stage.
 
 | | |
 |---|---|
-| F12 | the next press. Pressed while one is still typing, it finishes the typing at once. |
+| F12 (fn-F12) or Page Down | the next press. Pressed while one is still typing, it finishes the typing at once. |
 | `rex do stage/rex/dat401.lua cmd=next` | the same, from any terminal |
 | `rex do stage/rex/dat401.lua cmd=goto title="Losing a Region"` | the next press starts that talk step (any part of its title) |
 | `rex do stage/rex/dat401.lua cmd=status` | where you are, and what the next press does |
@@ -76,8 +78,12 @@ press in `log.txt`.
 
 ## How it works
 
-A press is its own `rex do` process. The F12 binding starts one, so a long
-press (typing, waiting for psql) never holds up the Rex server. Everything goes
+`cmd=start` also starts the stage's **driver**, `cmd=serve`, in a pane of the
+stage session that's never on screen. F12 only leaves a request beside the
+stage's state, and the driver runs the press, so a long press (typing, waiting
+for psql) never holds up the Rex server. (A process the binding started itself
+would end with whatever ran the binding.) `cmd=next` from a terminal runs a
+press itself. Everything goes
 through Rex's server API:
 
 - **Panes** are terminal blocks in one window, created as they're needed with

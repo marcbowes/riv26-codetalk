@@ -9,6 +9,11 @@
 --   rex do stage/rex/dat401.lua cmd=status
 --   rex do stage/rex/dat401.lua cmd=reset            close the session, forget everything
 --
+-- cmd=start also starts the driver, `cmd=serve`, in a pane of the stage
+-- session that's never on screen: F12 (stage/rex/init.lua) leaves a request,
+-- and the driver runs the press. (A process the F12 binding started itself
+-- would end with whatever ran the binding.)
+--
 -- Unlike Emacs: highlights are yours (the mouse), ids are pasted rather than
 -- copied in copy mode, and a jump doesn't run the steps before it. A press made
 -- while another is still typing makes that one finish its typing at once.
@@ -23,6 +28,7 @@ local STATE_DIR = os.getenv("DAT401_REX_STATE") or ((os.getenv("HOME") or "/tmp"
 local STATE_FILE = STATE_DIR .. "/state.json"
 local LOCK = STATE_DIR .. "/running"
 local HURRY = STATE_DIR .. "/hurry"
+local REQUESTS = STATE_DIR .. "/requests"   -- F12 drops "next" here; the driver runs it
 local LOG = STATE_DIR .. "/log.txt"
 
 local TITLES = {
@@ -863,6 +869,50 @@ end
 
 local commands = {}
 
+-- `rex`: on the PATH in Rex's terminals; the server's own is a fallback.
+local REX_LAUNCH = [[
+for r in rex "$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex"; do
+  if command -v "$r" >/dev/null 2>&1; then exec "$r" do "$0" "$1"; fi
+done
+echo "can't find rex" >&2; exit 127]]
+
+-- The driver: run each press F12 asks for, until the stage is gone.
+function commands.serve()
+  need_state()
+  local session = state.session_id
+  log("driver up")
+  local ticks = 0
+  while true do
+    if exists(REQUESTS) then
+      os.remove(REQUESTS)
+      if not locked() then
+        local ok, res = pcall(function()
+          load_state()
+          attach(state.session_id)
+          return press((state.step or 0) + 1)
+        end)
+        log("driver: %s", ok and tostring(res) or ("failed: " .. tostring(res)))
+      end
+    end
+    rex.sleep(0.1)
+    ticks = ticks + 1
+    if ticks % 30 == 0 and (not exists(STATE_FILE) or not session_alive(session)) then
+      log("driver: the stage is gone, stopping")
+      return "stopped"
+    end
+  end
+end
+
+local function start_driver()
+  local r = call("session.new_block", {
+    session_id = S, flavor = FLAVOR, label = "dat401 driver",
+    options = { shell = "none", command = { "/bin/sh", "-c", REX_LAUNCH, SOURCE, "cmd=serve" }, cwd = REPO },
+  })
+  rex.call("session.disown_block", { session_id = S, block_ids = { r.block_id } })
+  state.driver = r.block_id
+  save_state()
+end
+
 function commands.start()
   if load_state() and session_alive(state.session_id) then
     error("a stage is already running (" .. state.session_id .. "): cmd=reset first")
@@ -883,7 +933,9 @@ function commands.start()
   rex.call("session.disown_block", { session_id = S, block_ids = { state.panes.a } })
   save_state()
   os.remove(LOCK)
-  -- F12 exists only while a stage runs (stage/rex/init.lua).
+  -- F12 exists only while a stage runs (stage/rex/init.lua), and the driver
+  -- runs what it asks for.
+  start_driver()
   rex.call("server.config_reload", {})
   -- The agents for the talk's prompts, off screen: Rex keeps drawing a
   -- terminal nobody's looking at.
