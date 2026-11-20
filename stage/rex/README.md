@@ -25,7 +25,7 @@ What's different from Emacs:
 |---|---|
 | `dat401.lua` | The runtime: `rex do stage/rex/dat401.lua cmd=...` |
 | `talk.lua` | The presses, **generated** from TALK.md (`python3 stage/generate.py`). Don't edit it. |
-| `init.lua` | F12 and Page Down, for your Rex config |
+| `init.lua` | F12, for your Rex config |
 
 ## Setup (once)
 
@@ -37,10 +37,9 @@ dofile(os.getenv("HOME") .. "/code/riv26-codetalk/stage/rex/init.lua")
 ```
 
 That line binds nothing until a stage is running. Rex has no per-session key
-bindings, so `cmd=start` reloads the config to add F12 and Page Down (a
-clicker's next), and `cmd=reset` reloads it again to take them away. While the
-stage runs, they act only in the "DAT401 stage" session: anywhere else they do
-what they always did.
+bindings, so `cmd=start` reloads the config to add F12, and `cmd=reset` reloads
+it again to take it away. While the stage runs, F12 acts only in the "DAT401
+stage" session: anywhere else it does what it always did.
 
 Also, as for the Emacs stage: `stage/setup-cdc-role.sh` (step 9's role), the
 finished app deployed (`demo/deploy.sh`), and `demo/preflight.sh` before the
@@ -62,11 +61,11 @@ already in it, so no agent starts (or updates) on stage.
 
 | | |
 |---|---|
-| F12 or Page Down | the next press. Pressed while one is still typing, it finishes the typing at once. |
+| F12 | the next press. Pressed while one is still typing, it finishes the typing at once. |
 | `rex do stage/rex/dat401.lua cmd=next` | the same, from any terminal |
 | `rex do stage/rex/dat401.lua cmd=goto title="Losing a Region"` | the next press starts that talk step (any part of its title) |
 | `rex do stage/rex/dat401.lua cmd=status` | where you are, and what the next press does |
-| `rex do stage/rex/dat401.lua cmd=reset` | close the session and forget everything, for a clean `cmd=start` |
+| `rex do stage/rex/dat401.lua cmd=reset` | stop: close the session, forget everything, and give F12 back. Just closing the session works too (the next `cmd=start` starts fresh), but F12 stays bound, and passing through, until the config next reloads. |
 
 What `cmd=start` keeps, from its environment: `AWS_PROFILE` (or
 `DAT401_AWS_PROFILE`), `DAT401_AWS_REGION` (us-west-2), `SHELL`,

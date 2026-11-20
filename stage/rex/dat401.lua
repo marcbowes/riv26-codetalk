@@ -883,7 +883,7 @@ function commands.start()
   rex.call("session.disown_block", { session_id = S, block_ids = { state.panes.a } })
   save_state()
   os.remove(LOCK)
-  -- F12 and Page Down exist only while a stage runs (stage/rex/init.lua).
+  -- F12 exists only while a stage runs (stage/rex/init.lua).
   rex.call("server.config_reload", {})
   -- The agents for the talk's prompts, off screen: Rex keeps drawing a
   -- terminal nobody's looking at.
@@ -929,7 +929,7 @@ function commands.reset()
     call("session.destroy", { session_id = S })
   end
   os.remove(STATE_FILE); os.remove(LOCK); os.remove(HURRY)
-  rex.call("server.config_reload", {})   -- and F12 and Page Down are gone again
+  rex.call("server.config_reload", {})   -- and F12 is back to normal
   return "reset: the stage session is closed"
 end
 

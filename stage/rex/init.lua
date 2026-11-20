@@ -1,13 +1,12 @@
--- init.lua: F12, or a clicker's Page Down, runs the next press of the DAT401
--- stage in Rex. Load it from your own Rex config (~/.config/rex/init.lua),
+-- init.lua: F12 runs the next press of the DAT401 stage in Rex. Load it from your own Rex config (~/.config/rex/init.lua),
 -- with this repo's path:
 --
 --   dofile(os.getenv("HOME") .. "/code/riv26-codetalk/stage/rex/init.lua")
 --
 -- It binds nothing unless a stage is running: Rex has no per-session key
 -- bindings, so dat401.lua's cmd=start and cmd=reset reload the config, and
--- the keys come and go with the stage. While it runs, they act only in the
--- "DAT401 stage" session; anywhere else they do what they always do.
+-- the key comes and goes with the stage. While it runs, it acts only in the
+-- "DAT401 stage" session; anywhere else it does what it always does.
 --
 -- A press runs as its own `rex do` process, so a long one (typing, waiting for
 -- psql) never holds up the server. A press made while one is still typing
@@ -27,7 +26,7 @@ local function stage_session()
   return ok and type(s) == "table" and s.session_id or nil
 end
 
--- No stage, no keys.
+-- No stage, no key.
 if not stage_session() then return end
 
 -- `rex` is on the PATH in Rex's own terminals; the server's is a fallback.
@@ -51,4 +50,3 @@ rex.action{
 }
 
 rex.bind("f12", "dat401_next", { key = "f12" })
-rex.bind("pagedown", "dat401_next", { key = "pagedown" })
