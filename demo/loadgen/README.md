@@ -82,7 +82,7 @@ The binary's full `--help` explains every flag. The important ones:
 | `--duration` | until Ctrl-C | `90s`, `10m`, `1h30m`. |
 | `--mix R/W` | `90/10` | Plus `--list-share` (40), `--category-share` (50), `--new-post-share` (0). |
 | `--connections N` | 2048 | Max connections, which equals max in-flight requests, per Region. |
-| `--no-failover` | failover on | Keep sending a failing Region its share (see [Failover](#failover)). |
+| `--failover` | 50/50 | Start in hit-the-target mode; `f` switches while it runs (see [Failover](#failover)). |
 | `--timeout`, `--connect-timeout` | 10 s, 5 s | |
 | `--threads N` | CPUs | Tokio worker threads. |
 | `--plain`, `--report FILE`, `--title TEXT` | | |
@@ -137,22 +137,37 @@ which exercises multi-Region strong consistency: a 404 there would be a bug.
 
 ### Failover
 
-With `--rps`, a Region whose API stops answering has its traffic sent to
-the healthy Regions instead, as a multi-Region client would. The total stays
-at the target. In the talk, an FIS experiment makes us-east-1's DSQL refuse
-connections, so its API answers at once, and us-west-2 takes everything.
-Every request there tries a new connection, and the refused attempts use up
-the cluster's 100 new connections a second, so most answers are 429 ("rate
-exceeded") and the rest 503.
+With `--rps` there are two modes, and the `f` key switches between them while
+it runs (the footer says which it's in):
+
+- **50/50** (the default): every Region keeps its share, failing or not, so a
+  failing Region's share just fails and the total drops. With two Regions,
+  that's half.
+- **Hit the target**: a failing Region's traffic goes to the healthy Regions
+  instead, as a multi-Region client would, and the total goes back to the
+  target. `--failover` starts in this mode.
+
+In the talk, an FIS experiment makes us-east-1's DSQL refuse connections. The
+total drops to half (50/50); `f`, and us-west-2 takes everything; the
+experiment stops, and us-east-1 gets its share back with no key press. Under
+FIS, every request to us-east-1 tries a new connection, and the refused
+attempts use up the cluster's 100 new connections a second, so most answers
+are 429 ("rate exceeded") and the rest 503.
 
 - **Down.** Once a second, a Region counts as down if at least half of the
   last second's responses (and at least 10) were 5xx, 429s, timeouts or
   connection errors. 4xx doesn't count, and a little throttling is the
-  back-off's business (above).
-- **Probing.** A down Region still gets 0.2% of its own traffic (at least
-  5 req/s) to notice when it's back. That's about 20 connection attempts a
-  second at 10,000 req/s, well inside the cluster's 100. The rest goes to the Regions that are
-  up, spread evenly. If none is, nothing is rerouted.
+  back-off's business (above). Health is tracked in both modes, so a down
+  Region is red even in 50/50, and `f` moves its traffic at once.
+- **Moved at the full rate.** While a down Region's traffic is being moved,
+  its throttle back-off is off: its 429s mean it's down, not busy, and a
+  back-off would shrink the traffic the healthy Regions take. (It did, in a
+  rehearsal: the total stayed at half.) In 50/50, or with nowhere to send it,
+  the back-off works as usual.
+- **Probing.** A down Region whose traffic has moved still gets 0.2% of it
+  (at least 5 req/s) to notice when it's back. That's about 20 connection
+  attempts a second at 10,000 req/s, well inside the cluster's 100. The rest
+  goes to the Regions that are up, spread evenly. If none is, nothing moves.
 - **Back.** After 3 seconds in a row of probes at least 90% OK (at least two
   each), its traffic moves back linearly over 30 s, so its Lambda
   environments reconnect to DSQL a few at a time: about 35 a second at
@@ -160,16 +175,13 @@ exceeded") and the rest 503.
   back, 429s are left to the back-off; only 5xx, timeouts and connection
   errors send it back down.
 - **On screen.** A down Region's name turns red and a returning one's yellow.
-  `rate` is what each Region is actually sent after rerouting. The Events
-  panel says when traffic moves and when it moves back. The `--plain` line
-  marks the Region `DOWN` or `RETURNING`. The report has each Region's
-  `failovers` count and a per-second `state`.
+  `rate` is what each Region is actually sent. The Events panel says when a
+  Region goes down, when `f` switches mode, and when traffic moves back. The
+  `--plain` line marks the Region `DOWN` or `RETURNING`. The report has each
+  Region's `failovers` (times its traffic was moved) and `downs`, and a
+  per-second `state`.
 - **Timing.** The switch comes at the next whole second after the failures
-  start, so expect one second at roughly half the TPS, then the full target
-  again from the healthy Region.
-
-`--no-failover` turns it off: a failing Region keeps its share, and its
-failures just count.
+  start (or at once, on `f`).
 
 ## Quotas and connection-rate notes (why the ramp is gentle)
 

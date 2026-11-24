@@ -1103,9 +1103,18 @@ aws fis start-experiment --region us-east-1 --experiment-template-id <fis-templa
 ```
 
 About 20 seconds later, every us-east-1 Lambda loses its database connection
-and can't get another, so that Region's API answers 503. In the Regions table,
-us-east-1's requests fail, the load generator sends its share to us-west-2,
-and the total stays at 20,000 a second.
+and can't get another, so that Region's API fails (503s, and 429s once the
+refused attempts use up the cluster's connection rate). us-east-1 turns red in
+the Regions table, and the total drops to 10,000 a second. The load generator
+is splitting 50/50, and half of it is going to a Region that can't answer.
+
+A real client would send those users to the Region that's up. Tell the load
+generator to do the same (`f`, "hit the target"):
+
+<!-- stage: send f to load -->
+
+us-west-2 takes all of it, and the total is back at 20,000 a second, from one
+Region, with nothing provisioned for it.
 
 <!-- stage: cue browser -->
 
@@ -1121,8 +1130,8 @@ aws fis stop-experiment --region us-east-1 --id <fis-experiment-id> --query expe
 <!-- stage: cue browser -->
 
 New connections work at once. The spinner clears, and the load generator moves
-us-east-1's traffic back over 30 seconds, so its Lambdas reconnect a few at a
-time.
+us-east-1's traffic back over 30 seconds by itself, no key press, so its
+Lambdas reconnect a few at a time: an even split again.
 
 > **★ DSQL difference: losing a Region is a routing problem, not a database
 > one.** Both endpoints were read-write all along, so there's nothing to
@@ -1139,6 +1148,10 @@ time.
 - The bottom 20% of the screen is a shell under the load generator. F12 types
   `start-experiment` there. The experiment id it prints is copied into
   `stop-experiment`.
+- Wait for the drop before the next F12: us-east-1 red, the total at half.
+  That F12 presses `f` in the load generator for you (the keyboard is in the
+  shell), and its footer changes from "50/50 split" to "hitting the target".
+  Pressing `f` again goes back to 50/50.
 - After each FIS command, Emacs shows "→ browser": ⌘-Tab to the site, then back
   to Emacs for the next F12.
 - The template is the `Dat401-Fis-us-east-1` stack (`demo/deploy.sh` makes it).

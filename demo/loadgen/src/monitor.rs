@@ -112,6 +112,9 @@ pub struct View {
     pub all: RegionRow,
     pub events: Vec<String>,
     pub show_db: bool,
+    /// The failover mode, when there is one (open loop): true when hitting
+    /// the target, false for 50/50.
+    pub failover: Option<bool>,
     pub posts: usize,
     pub users: usize,
 }
@@ -379,6 +382,7 @@ impl Monitor {
             all,
             events: ctx.events.recent(20),
             show_db: self.db_seen,
+            failover: ctx.failover.enabled().then(|| ctx.failover.rerouting()),
             posts: ctx.pool.post_count(),
             users: ctx.pool.user_count(),
         }

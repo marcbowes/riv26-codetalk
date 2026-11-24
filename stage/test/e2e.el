@@ -119,8 +119,15 @@
                  (sit-for 5))
                 ;; (The generator's events are only on its live display, gone
                 ;; once it quits: keep what it showed.)
+                ;; 50/50 first: us-east-1 goes down and keeps its half.
                 ((string-match-p "fis start-experiment" (format "%S" step))
-                 (dat401-e2e--log "FIS started: %s" (dat401-e2e--wait-text 'load "sending its traffic to" 120))
+                 (dat401-e2e--log "FIS started: %s" (dat401-e2e--wait-text 'load "still gets half" 120))
+                 (write-region (concat (dat401--pane-text 'load) "\n") nil
+                               (expand-file-name "load-fis.txt" out) t 'silent))
+                ;; f: hit the target, its traffic moves to us-west-2.
+                ((string-match-p "dat401-send-keys 'load" (format "%S" step))
+                 (dat401-e2e--log "f: %s" (dat401-e2e--wait-text 'load "hit the target: " 30))
+                 (sit-for 6)
                  (write-region (concat (dat401--pane-text 'load) "\n") nil
                                (expand-file-name "load-fis.txt" out) t 'silent))
                 ((string-match-p "fis stop-experiment" (format "%S" step))

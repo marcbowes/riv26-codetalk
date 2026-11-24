@@ -244,8 +244,9 @@ def main():
         ("finale: copies select exactly what's pasted", os.path.exists(os.path.join(out, "copy-misses.txt"))
          and not read(out, "copy-misses.txt").strip()),
         ("finale: no errors in the shell", not re.search(r"no matches found|command not found|error", shell, re.I)),
-        ("finale: traffic moved off us-east-1, then back",
-         "sending its traffic to us-west-2" in read(out, "load-fis.txt")
+        ("finale: 50/50 kept half on us-east-1, f moved it, then it came back",
+         "still gets half" in read(out, "load-fis.txt")
+         and "sending us-east-1's traffic to us-west-2" in read(out, "load-fis.txt")
          and "answering again" in read(out, "load-fis.txt") and "Failovers: 1" in load),
         ("finale: no unresolved placeholders typed",
          not re.search(r"<(blog-url|fis-template-id|fis-experiment-id|post-id|us-[a-z]+-\d-endpoint)>",

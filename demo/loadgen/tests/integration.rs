@@ -408,6 +408,7 @@ async fn failing_region_fails_over_and_comes_back() {
         &west.url(),
         "--url",
         &east.url(),
+        "--failover",
         "--rps",
         "2000",
         "--ramp",
@@ -443,9 +444,11 @@ async fn failing_region_fails_over_and_comes_back() {
     // Then its probes came back healthy, and its traffic started moving back.
     let returning = timeline_in(r, 1, "returning");
     assert!(!returning.is_empty(), "never came back\n{}", run.stdout);
+    // (It ramps back over RETURN_SECS, 30 s, so a couple of seconds in it's
+    // well above the 5 req/s probes but far from its 1,000.)
     let last = returning.last().unwrap();
     assert!(
-        last["regions"][1]["tps"].as_f64().unwrap() >= 50.0,
+        last["regions"][1]["rate"].as_f64().unwrap() >= 20.0,
         "{last}"
     );
     assert!(
@@ -465,7 +468,7 @@ async fn failing_region_fails_over_and_comes_back() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn no_failover_keeps_sending_to_a_failing_region() {
+async fn fifty_fifty_keeps_sending_to_a_failing_region() {
     let shared = Shared::seed(SeedConfig::default());
     let west = server("west", shared.clone(), |_| {}).await;
     let east = server("east", shared, |_| {}).await;
@@ -479,7 +482,6 @@ async fn no_failover_keeps_sending_to_a_failing_region() {
         &west.url(),
         "--url",
         &east.url(),
-        "--no-failover",
         "--rps",
         "1000",
         "--ramp",
@@ -502,5 +504,49 @@ async fn no_failover_keeps_sending_to_a_failing_region() {
     let share = rw / (rw + re);
     assert!((0.4..=0.6).contains(&share), "west share {share}");
     assert!(u(&regions[1]["errors"]["server5xx"]) > 500);
-    assert!(!run.stdout.contains("DOWN"), "{}", run.stdout);
+    // It's shown down, but keeps its share until someone presses f.
+    assert!(run.stdout.contains("east DOWN"), "{}", run.stdout);
+    assert!(run.stdout.contains("50/50, so it still gets half"), "{}", run.stdout);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn throttled_region_is_rerouted_at_the_full_rate() {
+    // The bug from the 2026-11-20 dry run: under FIS, most of us-east-1's
+    // answers were 429. Its throttle back-off kept cutting its rate, and the
+    // rerouted traffic with it: the total fell to half the target.
+    let shared = Shared::seed(SeedConfig::default());
+    let west = server("west", shared.clone(), |_| {}).await;
+    let east = server("east", shared, |_| {}).await;
+    let state = east.state.clone();
+    let outage = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+        state.throttling.store(true, Relaxed);
+    });
+    let run = loadgen(&[
+        "--url",
+        &west.url(),
+        "--url",
+        &east.url(),
+        "--failover",
+        "--rps",
+        "2000",
+        "--ramp",
+        "0",
+        "--duration",
+        "9s",
+        "--refresh",
+        "0",
+    ])
+    .await;
+    outage.await.unwrap();
+    let r = &run.report;
+    let regions = r["regions"].as_array().unwrap();
+    assert_eq!(u(&regions[1]["failovers"]), 1, "{}", run.stdout);
+    let down = timeline_in(r, 1, "down");
+    assert!(down.len() >= 4, "down for {} s\n{}", down.len(), run.stdout);
+    for p in &down[1..] {
+        let total = p["totalTps"].as_f64().unwrap();
+        assert!(total >= 1700.0, "total {total} at {}\n{}", p["t"], run.stdout);
+        assert!(p["regions"][0]["rate"].as_f64().unwrap() >= 1950.0, "{p}");
+    }
 }

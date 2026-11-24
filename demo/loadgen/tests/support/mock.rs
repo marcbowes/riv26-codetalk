@@ -133,6 +133,10 @@ pub struct MockState {
     pub failing: AtomicBool,
     /// 503s answered while failing.
     pub failed: AtomicU64,
+    /// While set (and not failing), every route answers 429 "rate exceeded",
+    /// like the real API when refused connection attempts have used up its
+    /// DSQL cluster's connection rate (the bulk of an FIS outage).
+    pub throttling: AtomicBool,
 }
 
 pub struct MockServer {
@@ -345,6 +349,7 @@ pub async fn start(
         counters: Counters::default(),
         failing: AtomicBool::new(false),
         failed: AtomicU64::new(0),
+        throttling: AtomicBool::new(false),
     });
     let app = Router::new()
         .route("/health", get(health))
@@ -401,6 +406,18 @@ async fn gate(State(state): State<Arc<MockState>>, req: Request, next: Next) -> 
             "database unavailable: unable to accept connection",
             0.0,
         )
+    } else if state.throttling.load(Relaxed) {
+        let mut r = error(
+            &state,
+            StatusCode::TOO_MANY_REQUESTS,
+            "database connection limit reached, retry with backoff: unable to accept connection, rate exceeded",
+            0.0,
+        );
+        r.headers_mut().insert(
+            "x-amzn-errortype",
+            HeaderValue::from_static("TooManyRequestsException"),
+        );
+        r
     } else {
         next.run(req).await
     };

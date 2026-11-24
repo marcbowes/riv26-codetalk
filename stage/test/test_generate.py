@@ -120,7 +120,7 @@ class RealTalk(unittest.TestCase):
                          + out.count("(dat401-code ") + out.count("(dat401-highlight ")
                          + out.count("(dat401-unhighlight)") + out.count("(dat401-open ")
                          + out.count("(dat401-close ") + out.count("(dat401-recall ")
-                         + out.count("(dat401-cue "),
+                         + out.count("(dat401-cue ") + out.count("(dat401-send-keys "),
                          len(cmds))
         self.assertGreaterEqual(out.count("(dat401-recall 'a "), 2)       # re-runs come from history
         self.assertNotIn("(dat401-key ", out)                # no banners: it should look live
@@ -135,9 +135,10 @@ class RealTalk(unittest.TestCase):
         self.assertIn("(dat401-paste 'us-east-1 \"export PGHOST=<us-east-1-endpoint>", out)
         self.assertIn("(dat401-copy-into 'us-west-2 'us-east-1 ", out)
         self.assertIn("(dat401-recall 'us-east-1 ", out)
-        self.assertIn("(dat401--show 'shell) (progn (dat401-run 'shell \"aws fis start-experiment", out)
+        self.assertIn("(dat401--show 'shell) (dat401-run 'shell \"aws fis start-experiment", out)
         self.assertIn("<fis-experiment-id>", out)
         self.assertEqual(out.count('(dat401-cue "browser")'), 2)
+        self.assertIn("(dat401-send-keys 'load \"f\")", out)    # 50/50, then hit the target
         self.assertNotIn("sdtn7gjobfeglgjbysgk3pog4i", out)  # rehearsal job id replaced
 
     def test_rex_presses(self):

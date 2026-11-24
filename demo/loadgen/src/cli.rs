@@ -45,13 +45,17 @@ Size it at about target req/s per Region x worst-case latency in seconds, with h
 server does negotiate HTTP/2, requests are spread over ceil(N/100) multiplexed connections instead.";
 
 const FAILOVER_LONG_HELP: &str = "\
-Turn off Region failover, which is on by default with --rps.
+Start in hit-the-target mode instead of 50/50. The f key switches between them while it runs.
 
-With failover, a Region counts as down when at least half of a second's responses (and at least \
-10) are 5xx, timeouts or connection errors; 4xx and throttling don't count. Its traffic then goes \
-to the healthy Regions, except 1% (at least 5 req/s) that keeps probing it. After 3 seconds in a \
-row of probes at least 90% OK, its traffic moves back over 10 s. With --no-failover a failing \
-Region keeps its share, and the failures just count.";
+50/50 (the default): every Region keeps its share, failing or not, so a failing Region's share \
+just fails. Hit the target: a failing Region's traffic goes to the healthy Regions, so the total \
+stays at the target.
+
+A Region counts as down when at least half of a second's responses (and at least 10) are 5xx, \
+429s, timeouts or connection errors; 4xx doesn't count. A down Region isn't throttled back. When \
+rerouted, 0.2% of its traffic (at least 5 req/s) keeps probing it. After 3 seconds in a row of \
+probes at least 90% OK, its traffic moves back over 30 s, with no key press. Open loop (--rps) \
+only.";
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -170,9 +174,9 @@ pub struct Args {
     )]
     pub refresh: f64,
 
-    /// Don't move a failing Region's traffic to the healthy ones (open loop); see --help
+    /// Start moving failing Regions' traffic to healthy ones (f switches); see --help
     #[arg(long, help_heading = "Load", long_help = FAILOVER_LONG_HELP)]
-    pub no_failover: bool,
+    pub failover: bool,
 
     /// Max connections (= in-flight requests) per Region; see --help
     #[arg(

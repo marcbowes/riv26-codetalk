@@ -214,6 +214,9 @@ PANES = ("a", "b", "shell", "events")
 def cue_form(direction, pane, line):
     """A <!-- stage: ... --> direction -> an Elisp form."""
     words = direction.split()
+    if len(words) >= 4 and words[0] == "send" and words[-2] == "to":
+        # A key press in a pane's program: the load generator's f.
+        return "(dat401-send-keys '%s %s)" % (words[-1].lower(), el(" ".join(words[1:-2])))
     if len(words) >= 2 and words[0] == "cue":
         # A reminder for the presenter (switch to the browser), shown when
         # the command before it is done. It rides along with that F12.
@@ -226,7 +229,8 @@ def cue_form(direction, pane, line):
             and words[2].lower() in PANES:
         return "(dat401-%s '%s)" % (words[0], words[2].lower())
     raise SystemExit("TALK.md line %s: unknown stage direction %r (expected `highlight "
-                     "<field>`, `clear`, `cue <text>`, or `open|close pane <pane>`)" % (line, direction))
+                     "<field>`, `clear`, `cue <text>`, `send <keys> to <pane>`, or `open|close pane <pane>`)"
+                     % (line, direction))
 
 
 def step_forms(step):
@@ -414,6 +418,8 @@ def describe_op(op):
     o = op["op"]
     if o in ("run",):
         return "%s in %s: %s" % (o, "+".join(op["panes"]), op["text"].splitlines()[0][:60])
+    if o == "keys":
+        return "keys %s: %s" % (op["pane"], op["text"])
     if o in ("paste", "recall"):
         return "%s in %s: %s" % (o, op["pane"], op["text"].splitlines()[0][:60])
     if o == "copy_into":
@@ -469,6 +475,9 @@ def rex_presses(step):
             words = b["target"].split()
             if (words and words[0] == "highlight") or words == ["clear"]:
                 continue        # the presenter highlights with the mouse
+            if len(words) >= 4 and words[0] == "send" and words[-2] == "to":
+                add([{"op": "keys", "pane": words[-1].lower(), "text": " ".join(words[1:-2])}])
+                continue
             if len(words) >= 2 and words[0] == "cue":
                 cue = {"op": "cue", "text": " ".join(words[1:])}
                 if presses:

@@ -789,6 +789,14 @@ function ops.quit_agent()
   save_state()
 end
 
+-- A key press in the program running in a pane (the load generator's f, for
+-- "hit the target").
+function ops.keys(op)
+  show(op.pane)
+  pause(pause_ms(300, 0.3))
+  write(op.pane, op.text)
+end
+
 -- A reminder for a move only the presenter can make (switch to the browser):
 -- shown as the window's label until the next press.
 function ops.cue(op)
@@ -830,7 +838,9 @@ end
 local function describe(press)
   local parts = {}
   for _, op in ipairs(press or {}) do
-    if op.text then
+    if op.op == "keys" then
+      parts[#parts + 1] = "keys " .. op.pane .. ": " .. op.text
+    elseif op.text then
       parts[#parts + 1] = op.op .. ": " .. (op.text:match("^[^\n]*") or ""):sub(1, 60)
     elseif op.op ~= "section" then
       parts[#parts + 1] = op.op .. (op.pane and (" " .. op.pane) or (op.panes and (" " .. table.concat(op.panes, "+")) or ""))

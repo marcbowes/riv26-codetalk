@@ -220,8 +220,19 @@ pub fn effective_rates(rates: &[f64], keep: &[f64], receives: &[bool]) -> Vec<f6
 
 /// Failover for every Region: the state machines (updated once a second) and
 /// what the pacers read on every send (published four times a second).
+///
+/// Two modes, switched with the `f` key. **50/50** (the default): every
+/// Region keeps its share, failing or not, so a failing Region's share just
+/// fails. **Hit the target**: a failing Region's traffic goes to the healthy
+/// ones. Health is tracked in both, so switching takes effect at once, and a
+/// Region that comes back gets its share back without a key press.
 pub struct Failover {
     enabled: bool,
+    reroute: AtomicBool,
+    initial: bool,
+    /// Times each Region's traffic was moved away (a down spell, rerouted).
+    moved: Vec<AtomicU64>,
+    moving: Vec<AtomicBool>,
     health: Vec<Mutex<Health>>,
     /// f64 bits: the share of each Region's own traffic it keeps.
     keep: Vec<AtomicU64>,
@@ -229,9 +240,15 @@ pub struct Failover {
 }
 
 impl Failover {
-    pub fn new(n: usize, enabled: bool) -> Self {
+    /// `enabled`: open loop (closed loop never reroutes). `reroute`: start in
+    /// hit-the-target mode rather than 50/50.
+    pub fn new(n: usize, enabled: bool, reroute: bool) -> Self {
         Self {
             enabled,
+            reroute: AtomicBool::new(enabled && reroute),
+            initial: enabled && reroute,
+            moved: (0..n).map(|_| AtomicU64::new(0)).collect(),
+            moving: (0..n).map(|_| AtomicBool::new(false)).collect(),
             health: (0..n).map(|_| Mutex::new(Health::new())).collect(),
             keep: (0..n).map(|_| AtomicU64::new(1.0f64.to_bits())).collect(),
             receives: (0..n).map(|_| AtomicBool::new(true)).collect(),
@@ -240,6 +257,31 @@ impl Failover {
 
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// Hit-the-target mode: failing Regions' traffic goes to the healthy ones.
+    pub fn rerouting(&self) -> bool {
+        self.reroute.load(Relaxed)
+    }
+
+    /// The mode it started in (`--failover`).
+    pub fn started_rerouting(&self) -> bool {
+        self.initial
+    }
+
+    /// Switch modes; takes effect at the next publish. False if it can't
+    /// (closed loop).
+    pub fn set_rerouting(&self, on: bool) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        self.reroute.store(on, Relaxed);
+        true
+    }
+
+    /// Times Region `t`'s traffic was moved to other Regions.
+    pub fn moved(&self, t: usize) -> u64 {
+        self.moved[t].load(Relaxed)
     }
 
     fn health(&self, t: usize) -> std::sync::MutexGuard<'_, Health> {
@@ -267,18 +309,28 @@ impl Failover {
         if !self.enabled {
             return;
         }
+        let reroute = self.rerouting();
         let receives: Vec<bool> = (0..rates.len())
             .map(|t| self.health(t).receives())
             .collect();
         for (t, rate) in rates.iter().enumerate() {
             let others = (0..rates.len()).any(|u| u != t && receives[u]);
-            let keep = if others {
+            let keep = if reroute && others {
                 self.health(t).keep(secs, *rate)
             } else {
                 1.0
             };
             self.keep[t].store(keep.to_bits(), Relaxed);
             self.receives[t].store(receives[t], Relaxed);
+            // Count each down spell whose traffic was moved, once.
+            let down = self.health(t).state() == State::Down;
+            if down && keep < 1.0 {
+                if !self.moving[t].swap(true, Relaxed) {
+                    self.moved[t].fetch_add(1, Relaxed);
+                }
+            } else if !down {
+                self.moving[t].store(false, Relaxed);
+            }
         }
     }
 
@@ -324,8 +376,15 @@ impl Failover {
     }
 }
 
-/// An event line for `change` in Region `t`.
-pub fn describe(labels: &[String], t: usize, change: &Change, receivers: &[usize]) -> String {
+/// An event line for `change` in Region `t`. `rerouting`: in hit-the-target
+/// mode (otherwise 50/50).
+pub fn describe(
+    labels: &[String],
+    t: usize,
+    change: &Change,
+    receivers: &[usize],
+    rerouting: bool,
+) -> String {
     let label = &labels[t];
     match change {
         Change::Down {
@@ -343,17 +402,21 @@ pub fn describe(labels: &[String], t: usize, change: &Change, receivers: &[usize
                 _ => "failing (5xx)",
             };
             let head = format!("{label}: {pct}% of {} requests {what}", fmt_int(*completed));
-            if receivers.is_empty() {
+            if !rerouting {
+                let share = if labels.len() == 2 { "half" } else { "its share" };
+                format!("{head}; 50/50, so it still gets {share} (f: hit the target)")
+            } else if receivers.is_empty() {
                 format!("{head}; no other Region is healthy, so not rerouting")
             } else {
                 let to: Vec<&str> = receivers.iter().map(|&u| labels[u].as_str()).collect();
                 format!("{head}; sending its traffic to {}", to.join(" and "))
             }
         }
-        Change::Returning => format!(
+        Change::Returning if rerouting => format!(
             "{label} answering again; moving its traffic back over {} s",
             RETURN_SECS
         ),
+        Change::Returning => format!("{label} answering again"),
     }
 }
 
@@ -532,7 +595,7 @@ mod tests {
 
     #[test]
     fn failover_routes_and_publishes() {
-        let f = Failover::new(2, true);
+        let f = Failover::new(2, true, true);
         let rates = [1000.0, 1000.0];
         f.observe(1, 1.0, &second(0, 100, Class::Server5xx));
         f.publish(1.0, &rates);
@@ -553,8 +616,51 @@ mod tests {
     }
 
     #[test]
+    fn fifty_fifty_tracks_health_but_keeps_shares() {
+        let f = Failover::new(2, true, false);
+        let rates = [1000.0, 1000.0];
+        f.observe(1, 1.0, &second(0, 100, Class::Server5xx));
+        f.publish(1.0, &rates);
+        // Down, but still sent its share: its share just fails.
+        assert_eq!(f.state(1), State::Down);
+        assert!((0..1000).all(|_| f.route(1) == 1));
+        assert_eq!(f.effective(&rates), rates.to_vec());
+        assert_eq!(f.moved(1), 0);
+        // f: hit the target. Its traffic moves at once, counted once.
+        assert!(f.set_rerouting(true));
+        f.publish(1.25, &rates);
+        f.publish(1.5, &rates);
+        let to_0 = (0..10_000).filter(|_| f.route(1) == 0).count();
+        assert!((9_900..=9_990).contains(&to_0), "{to_0}");
+        assert_eq!(f.moved(1), 1);
+        // Back to 50/50 while it's still down: its share goes back to it.
+        assert!(f.set_rerouting(false));
+        f.publish(1.75, &rates);
+        assert!((0..1000).all(|_| f.route(1) == 1));
+    }
+
+    #[test]
+    fn describes_fifty_fifty() {
+        let labels = vec!["us-west-2".to_string(), "us-east-1".to_string()];
+        let down = Change::Down {
+            failed: 970,
+            completed: 1000,
+            worst: Class::Throttled,
+            mixed: true,
+        };
+        assert_eq!(
+            describe(&labels, 1, &down, &[0], false),
+            "us-east-1: 97% of 1,000 requests failing (5xx and 429); 50/50, so it still gets half (f: hit the target)"
+        );
+        assert_eq!(
+            describe(&labels, 1, &Change::Returning, &[0], false),
+            "us-east-1 answering again"
+        );
+    }
+
+    #[test]
     fn disabled_does_nothing() {
-        let f = Failover::new(2, false);
+        let f = Failover::new(2, false, true);
         assert_eq!(f.observe(1, 1.0, &second(0, 100, Class::Server5xx)), None);
         f.publish(1.0, &[100.0, 100.0]);
         assert!((0..1000).all(|_| f.route(1) == 1));
@@ -577,19 +683,19 @@ mod tests {
             mixed: true,
         };
         assert_eq!(
-            describe(&labels, 1, &mixed, &[0]),
+            describe(&labels, 1, &mixed, &[0], true),
             "us-east-1: 97% of 1,000 requests failing (5xx and 429); sending its traffic to us-west-2"
         );
         assert_eq!(
-            describe(&labels, 1, &down, &[0]),
+            describe(&labels, 1, &down, &[0], true),
             "us-east-1: 97% of 1,000 requests failing (5xx); sending its traffic to us-west-2"
         );
         assert_eq!(
-            describe(&labels, 1, &down, &[]),
+            describe(&labels, 1, &down, &[], true),
             "us-east-1: 97% of 1,000 requests failing (5xx); no other Region is healthy, so not rerouting"
         );
         assert_eq!(
-            describe(&labels, 1, &Change::Returning, &[0]),
+            describe(&labels, 1, &Change::Returning, &[0], true),
             "us-east-1 answering again; moving its traffic back over 30 s"
         );
     }

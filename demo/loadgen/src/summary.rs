@@ -185,7 +185,7 @@ pub fn print(info: &RunInfo, ctx: &Ctx, mon: &Monitor, load_secs: f64) {
     let backoffs: u64 = (0..ctx.targets.len())
         .map(|t| ctx.controller(t).backoffs())
         .sum();
-    let failovers: u64 = (0..ctx.targets.len()).map(|t| ctx.failover.downs(t)).sum();
+    let failovers: u64 = (0..ctx.targets.len()).map(|t| ctx.failover.moved(t)).sum();
     println!(
         "Throttle back-offs: {backoffs}   Failovers: {failovers}   Post id pool: {}   Users: {}",
         fmt_int(ctx.pool.post_count() as u64),
@@ -251,7 +251,8 @@ pub fn report(info: &RunInfo, ctx: &Ctx, mon: &Monitor, load_secs: f64) -> Value
                 "connectionCap": target.cap,
                 "skipped": target.skipped.load(Relaxed),
                 "backoffs": c.backoffs(),
-                "failovers": ctx.failover.downs(t),
+                "failovers": ctx.failover.moved(t),
+                "downs": ctx.failover.downs(t),
                 "finalTarget": c.target(),
                 "finalRate": c.rate(load_secs),
                 "workers": ctx.workers.get(t).copied().unwrap_or(0),
@@ -273,7 +274,7 @@ pub fn report(info: &RunInfo, ctx: &Ctx, mon: &Monitor, load_secs: f64) -> Value
             "durationSecs": info.duration,
             "mix": { "read": info.read_pct, "write": info.write_pct, "detail": info.mix_detail },
             "connectionsPerRegion": info.connections,
-            "failover": ctx.failover.enabled(),
+            "failover": ctx.failover.started_rerouting(),
             "threads": info.threads,
             "timeoutSecs": info.timeout,
             "source": info.source,

@@ -53,6 +53,13 @@ def pane(name):
     return rex("capture", "-s", st["session_id"], "-b", block, "--trim", "--unwrap")
 
 
+def last_press():
+    """What the press just run did: the stage log's last "press N: ..." line."""
+    path = os.path.join(STATE, "log.txt")
+    lines = [l for l in open(path).read().splitlines() if re.match(r"\S+ press \d+: ", l)] if os.path.exists(path) else []
+    return lines[-1] if lines else ""
+
+
 def east_rate(load):
     """us-east-1's sending rate in the load generator's Regions table, or None.
     (Read from the table: in a pane nobody's looking at, 80x24, the Events
@@ -105,20 +112,26 @@ def main():
                 break
             n = state()["step"]
             text = out
+            # What this press did, from the stage's log.
+            did = last_press()
             # What a presenter waits for by eye.
-            if "press 19 " in text:     # the loader, in the shell
+            if "05-load-sample-data" in did:     # the loader, in the shell
                 wait_text("shell", r"Done in", 240)
             if "Next: close agent" in text or "Next: quit_agent" in text:
                 notes.setdefault("agent screens", []).append(pane(state().get("current_agent") or "claude"))
-            if "press 72 " in text:     # the load test
+            if "loadgen" in did:                 # the load test
                 wait_text("load", r"STEADY", 180)
                 time.sleep(5)
-            if "press 73 " in text:     # start-experiment: wait for it to bite
-                notes["failover"] = wait_moved(150)
+            if "fis start-experiment" in did:    # 50/50: wait for us-east-1 to go down
+                # (A pane nobody's looking at is 80 columns: the event line is cut short.)
+                notes["down"] = wait_text("load", r"us-east-1: \d+% of [\d,]+ requests", 150)
+                notes["half kept"] = (east_rate(pane("load")) or 0) > 100
+            if "keys load: f" in did:            # f: hit the target
+                notes["failover"] = wait_moved(30)
                 notes["load during"] = pane("load")
                 with open(os.path.join(STATE, "load-during.txt"), "w") as f:
                     f.write(notes["load during"])
-            if "press 74 " in text:     # stop-experiment
+            if "fis stop-experiment" in did:
                 notes["back"] = wait_text("load", r"answering again", 150)
                 notes["load after"] = pane("load")
                 with open(os.path.join(STATE, "load-after.txt"), "w") as f:
@@ -161,7 +174,8 @@ def main():
             ("the edit read back in us-east-1", "(live from re:Invent)" in east),
             ("FIS started, then stopped", bool(re.search(r"\nEXP[A-Za-z0-9]{8,}", shell))
              and bool(re.search(r"\n(stopping|stopped)\b", shell))),
-            ("traffic moved off us-east-1, then back", bool(notes.get("failover")) and bool(notes.get("back"))
+            ("50/50: us-east-1 down, still sent half", bool(notes.get("down")) and bool(notes.get("half kept"))),
+            ("f moved its traffic, then it came back", bool(notes.get("failover")) and bool(notes.get("back"))
              and "Failovers: 1" in load),
             ("no errors in the shell", not re.search(r"no matches found|command not found|error", shell, re.I)),
             ("no unresolved placeholders",

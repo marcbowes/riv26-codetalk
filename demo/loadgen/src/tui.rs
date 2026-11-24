@@ -22,6 +22,8 @@ pub enum Command {
     Quit,
     Faster,
     Slower,
+    /// `f`: 50/50, or hit the target.
+    Failover,
 }
 
 enum UiMsg {
@@ -76,6 +78,7 @@ fn ui_loop(rx: Receiver<UiMsg>, cmds: tokio::sync::mpsc::UnboundedSender<Command
                 Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => {
                     let cmd = match k.code {
                         KeyCode::Char('q') | KeyCode::Esc => Some(Command::Quit),
+                        KeyCode::Char('f') => Some(Command::Failover),
                         KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
                             Some(Command::Quit)
                         }
@@ -508,12 +511,23 @@ fn render_events(f: &mut Frame, area: Rect, v: &View) {
 fn render_footer(f: &mut Frame, area: Rect, v: &View) {
     let key = |k: &'static str| Span::styled(k, bold(Color::White));
     let txt = |t: String| Span::styled(t, Style::new().fg(DIM));
-    let line = Line::from(vec![
+    let mut line = Line::from(vec![
         Span::raw(" "),
         key("q"),
         txt(" quit   ".into()),
         key("+/-"),
         txt(" target ±25%   ".into()),
+    ]);
+    // The failover mode, which `f` switches.
+    if let Some(rerouting) = v.failover {
+        line.spans.push(key("f"));
+        line.spans.push(if rerouting {
+            Span::styled(" hitting the target   ", bold(Color::Green))
+        } else {
+            txt(" 50/50 split   ".into())
+        });
+    }
+    line.spans.extend([
         txt(format!("mix {}   {}   ", v.info.mix, v.info.http)),
         txt(format!("{} Region(s)", v.regions.len())),
     ]);
@@ -593,6 +607,7 @@ mod tests {
             all: row("all"),
             events: vec!["00:12 us-east-1: example event".into()],
             show_db: true,
+            failover: Some(false),
             posts: 3412,
             users: 200,
         }

@@ -260,9 +260,11 @@ select id, title from posts order by created_at desc limit 1;
  ;; 90. 20,000 requests a second (TALK.md line 1047): run shell
  (progn (dat401-section "20,000 requests a second") (dat401-layout 'load) (dat401-run 'load "cd demo/loadgen
 ./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""))
- ;; 91. Losing a Region (TALK.md line 1094): run shell, then cue browser
- (progn (dat401-section "Losing a Region") (dat401--show 'shell) (progn (dat401-run 'shell "aws fis start-experiment --region us-east-1 --experiment-template-id <fis-template-id> --query experiment.id --output text") (dat401-cue "browser")))
- ;; 92. run shell, then cue browser
+ ;; 91. Losing a Region (TALK.md line 1094): run shell
+ (progn (dat401-section "Losing a Region") (dat401--show 'shell) (dat401-run 'shell "aws fis start-experiment --region us-east-1 --experiment-template-id <fis-template-id> --query experiment.id --output text"))
+ ;; 92. stage: send f to load, then cue browser
+ (progn (dat401-send-keys 'load "f") (dat401-cue "browser"))
+ ;; 93. run shell, then cue browser
  (progn (dat401-run 'shell "aws fis stop-experiment --region us-east-1 --id <fis-experiment-id> --query experiment.state.status --output text") (dat401-cue "browser"))
  )
 

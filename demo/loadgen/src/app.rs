@@ -144,6 +144,57 @@ fn describe(label: &str, adj: Adjust, mode: Mode) -> String {
     }
 }
 
+/// Is Region `t` down with its traffic going to healthy Regions?
+fn moving_away(ctx: &Ctx, t: usize) -> bool {
+    ctx.failover.rerouting()
+        && ctx.failover.state(t) == failover::State::Down
+        && !ctx.failover.receivers_of(t).is_empty()
+}
+
+/// The `f` key: 50/50, or hit the target (a failing Region's traffic goes to
+/// the healthy ones).
+fn toggle_failover(ctx: &Ctx, t: f64) {
+    let on = !ctx.failover.rerouting();
+    if !ctx.failover.set_rerouting(on) {
+        ctx.events
+            .push("failover needs --rps (open loop)".to_string());
+        return;
+    }
+    // Whatever a down Region was backed off to in 50/50, all of its traffic
+    // moves now.
+    for d in 0..ctx.targets.len() {
+        if moving_away(ctx, d) {
+            ctx.controller(d).clear_ceiling();
+        }
+    }
+    ctx.failover.publish(t, &ctx.own_rates(t));
+    let mut msg = if on {
+        "hit the target: a failing Region's traffic goes to the healthy ones".to_string()
+    } else {
+        "50/50: every Region gets its share, failing or not".to_string()
+    };
+    if on {
+        for d in 0..ctx.targets.len() {
+            if ctx.failover.state(d) == failover::State::Down {
+                let to: Vec<&str> = ctx
+                    .failover
+                    .receivers_of(d)
+                    .iter()
+                    .map(|&u| ctx.targets[u].label.as_str())
+                    .collect();
+                if !to.is_empty() {
+                    msg.push_str(&format!(
+                        "; sending {}'s traffic to {}",
+                        ctx.targets[d].label,
+                        to.join(" and ")
+                    ));
+                }
+            }
+        }
+    }
+    ctx.events.push(msg);
+}
+
 fn retarget(ctx: &Ctx, cmd: Command, t: f64) {
     let factor = if cmd == Command::Faster { 1.25 } else { 0.8 };
     let mut total = 0.0;
@@ -443,7 +494,7 @@ pub async fn run(args: Args, threads: usize, fd_limit: Option<u64>) -> Result<()
         start,
         stop: AtomicBool::new(false),
         events: EventLog::new(start, plain),
-        failover: Failover::new(n, mode == Mode::Rate && !args.no_failover),
+        failover: Failover::new(n, mode == Mode::Rate, args.failover),
     });
     for w in &warnings {
         ctx.events.push(format!("warning: {w}"));
@@ -510,22 +561,37 @@ pub async fn run(args: Args, threads: usize, fd_limit: Option<u64>) -> Result<()
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 Command::Quit => quits += 1,
+                Command::Failover => toggle_failover(&ctx, t_now),
                 other => retarget(&ctx, other, t_now),
             }
         }
         if second {
             for t in 0..n {
                 let w = monitor.window(t);
+                if let Some(change) = &ctx.failover.observe(t, t_now, w) {
+                    let labels: Vec<String> = ctx.targets.iter().map(|x| x.label.clone()).collect();
+                    let to = ctx.failover.receivers_of(t);
+                    ctx.events.push(failover::describe(
+                        &labels,
+                        t,
+                        change,
+                        &to,
+                        ctx.failover.rerouting(),
+                    ));
+                }
+                // A down Region whose traffic is being moved isn't throttled
+                // back: its 429s (refused connections using up DSQL's connection
+                // rate) mean it's down, not busy, and a back-off would shrink the
+                // traffic the healthy Regions take. In 50/50, or with nowhere to
+                // send it, the back-off works as usual.
+                if moving_away(&ctx, t) {
+                    ctx.controller(t).clear_ceiling();
+                    continue;
+                }
                 let (throttled, completed) = (w.count(Class::Throttled), w.total());
                 let adj = ctx.controller(t).observe(t_now, throttled, completed);
                 if let Some(adj) = adj {
                     ctx.events.push(describe(&ctx.targets[t].label, adj, mode));
-                }
-                if let Some(change) = ctx.failover.observe(t, t_now, w) {
-                    let labels: Vec<String> = ctx.targets.iter().map(|x| x.label.clone()).collect();
-                    let to = ctx.failover.receivers_of(t);
-                    ctx.events
-                        .push(failover::describe(&labels, t, &change, &to));
                 }
             }
             monitor.record_second(&ctx, t_now);

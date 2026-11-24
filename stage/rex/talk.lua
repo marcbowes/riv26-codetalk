@@ -171,9 +171,11 @@ return {
     {{op = "run", panes = {"shell"}, text = "open <blog-url>"}},
     -- 72. 20,000 requests a second; layout load; run in load: cd demo/loadgen
     {{op = "section", title = "20,000 requests a second"}, {op = "layout", panes = {"load"}}, {op = "run", panes = {"load"}, text = "cd demo/loadgen\n./target/release/loadgen --run-on-ec2 --rps 20000 --title \"DAT401\""}},
-    -- 73. Losing a Region; show shell; run in shell: aws fis start-experiment --region us-east-1 --experiment-tem; cue browser
-    {{op = "section", title = "Losing a Region"}, {op = "show", pane = "shell"}, {op = "run", panes = {"shell"}, text = "aws fis start-experiment --region us-east-1 --experiment-template-id <fis-template-id> --query experiment.id --output text"}, {op = "cue", text = "browser"}},
-    -- 74. run in shell: aws fis stop-experiment --region us-east-1 --id <fis-experim; cue browser
+    -- 73. Losing a Region; show shell; run in shell: aws fis start-experiment --region us-east-1 --experiment-tem
+    {{op = "section", title = "Losing a Region"}, {op = "show", pane = "shell"}, {op = "run", panes = {"shell"}, text = "aws fis start-experiment --region us-east-1 --experiment-template-id <fis-template-id> --query experiment.id --output text"}},
+    -- 74. keys load: f; cue browser
+    {{op = "keys", pane = "load", text = "f"}, {op = "cue", text = "browser"}},
+    -- 75. run in shell: aws fis stop-experiment --region us-east-1 --id <fis-experim; cue browser
     {{op = "run", panes = {"shell"}, text = "aws fis stop-experiment --region us-east-1 --id <fis-experiment-id> --query experiment.state.status --output text"}, {op = "cue", text = "browser"}},
   },
 }

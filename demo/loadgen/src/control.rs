@@ -162,6 +162,12 @@ impl Controller {
         None
     }
 
+    /// Drop any throttle back-off: back on the ramp at once. (A Region that's
+    /// down isn't throttled: its traffic keeps its full rate, wherever it goes.)
+    pub fn clear_ceiling(&mut self) {
+        self.ceiling = None;
+    }
+
     /// Move to a new target from wherever we are now, at the original slope.
     pub fn set_target(&mut self, t: f64, target: f64) {
         let current = self.rate(t);

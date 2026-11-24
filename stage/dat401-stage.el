@@ -463,6 +463,15 @@ first, then end the agent, quietly."
     (when-let* ((buf (get-buffer (dat401--buffer-name pane))))
       (ignore-errors (dat401--kill-terminal buf)))))
 
+(defun dat401-send-keys (pane keys)
+  "Press KEYS in the program running in PANE, as you would at its keyboard
+(the load generator's f, for \"hit the target\"). The keyboard itself stays
+where it is."
+  (unless dat401--fast
+    (dat401--show pane)
+    (dat401--sleep (dat401--pause 300 0.3))
+    (dat401--send pane keys)))
+
 (defun dat401-cue (what)
   "Remind the presenter of a move only they can make (WHAT: \"browser\", a
 switch to the browser): a quiet note in the echo area, once the command
